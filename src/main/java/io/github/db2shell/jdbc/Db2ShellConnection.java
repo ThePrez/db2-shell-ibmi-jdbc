@@ -36,22 +36,32 @@ import io.github.db2shell.jdbc.internal.SqlText;
  */
 public class Db2ShellConnection implements Connection {
 
-    private final DriverConfig config;
-    private final Engine engine;
-    private final Set<Statement> statements = Collections.newSetFromMap(new WeakHashMap<Statement, Boolean>());
-    private boolean readOnly = false;
-    private int holdability = ResultSet.HOLD_CURSORS_OVER_COMMIT;
-    private Map<String, Class<?>> typeMap = new HashMap<String, Class<?>>();
-    private final Properties clientInfo = new Properties();
-    private SQLWarning warnings;
-    private int savepointCounter = 0;
-    private int networkTimeout = 0;
+    private final DriverConfig m_config;
+    private final Engine m_engine;
+    private final Set<Statement> m_statements = Collections.newSetFromMap(new WeakHashMap<Statement, Boolean>());
+    private boolean m_readOnly = false;
+    private int m_holdability = ResultSet.HOLD_CURSORS_OVER_COMMIT;
+    private Map<String, Class<?>> m_typeMap = new HashMap<String, Class<?>>();
+    private final Properties m_clientInfo = new Properties();
+    private SQLWarning m_warnings;
+    private int m_savepointCounter = 0;
+    private int m_networkTimeout = 0;
 
     Db2ShellConnection(final DriverConfig _config, final Engine _engine) {
-        config = _config;
-        engine = _engine;
+        m_config = _config;
+        m_engine = _engine;
     }
 
+    /**
+     * Starts a db2 utility process for the given configuration and wraps it in a connection. Warnings raised
+     * while the session was set up are available from {@link #getWarnings()}.
+     *
+     * @param _cfg
+     *            the parsed driver configuration
+     * @return the open connection
+     * @throws SQLException
+     *             if the db2 utility cannot be started or the session cannot be initialized
+     */
     static Db2ShellConnection open(final DriverConfig _cfg) throws SQLException {
         final Engine engine = new Engine(_cfg);
         engine.open();
@@ -63,62 +73,68 @@ public class Db2ShellConnection implements Connection {
     // =================================================================================== internal access
 
     Engine engine() {
-        return engine;
+        return m_engine;
     }
 
     DriverConfig config() {
-        return config;
+        return m_config;
     }
 
     void checkOpen() throws SQLException {
-        if (engine.isClosed()) {
+        if (m_engine.isClosed()) {
             throw SqlErrors.closed("Connection");
         }
     }
 
     void collectWarnings() {
-        for (final SQLWarning w : engine.takeConnectionWarnings()) {
+        for (final SQLWarning w : m_engine.takeConnectionWarnings()) {
             addWarning(w);
         }
     }
 
+    /**
+     * Appends a warning to this connection's warning chain.
+     *
+     * @param _w
+     *            the warning to add
+     */
     private void addWarning(final SQLWarning _w) {
-        if (null == warnings) {
-            warnings = _w;
+        if (null == m_warnings) {
+            m_warnings = _w;
         } else {
-            warnings.setNextWarning(_w);
+            m_warnings.setNextWarning(_w);
         }
     }
 
     void unregister(final Statement _s) {
-        synchronized (statements) {
-            statements.remove(_s);
+        synchronized (m_statements) {
+            m_statements.remove(_s);
         }
     }
 
     private <T extends Statement> T register(final T _s) {
-        synchronized (statements) {
-            statements.add(_s);
+        synchronized (m_statements) {
+            m_statements.add(_s);
         }
         return _s;
     }
 
     /** True if the server supports the BOOLEAN data type (IBM i 7.5 and later). */
     boolean booleanSupported() throws SQLException {
-        final Engine.ServerInfo si = engine.getServerInfo();
-        return si.version > 7 || (si.version == 7 && si.release >= 5);
+        final Engine.ServerInfo si = m_engine.getServerInfo();
+        return si.getVersion() > 7 || (7 == si.getVersion() && si.getRelease() >= 5);
     }
 
     // =================================================================================== statements
 
     @Override
     public Statement createStatement() throws SQLException {
-        return createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY, holdability);
+        return createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY, m_holdability);
     }
 
     @Override
     public Statement createStatement(final int _type, final int _concurrency) throws SQLException {
-        return createStatement(_type, _concurrency, holdability);
+        return createStatement(_type, _concurrency, m_holdability);
     }
 
     @Override
@@ -130,13 +146,13 @@ public class Db2ShellConnection implements Connection {
 
     @Override
     public PreparedStatement prepareStatement(final String _sql) throws SQLException {
-        return prepareStatement(_sql, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY, holdability);
+        return prepareStatement(_sql, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY, m_holdability);
     }
 
     @Override
     public PreparedStatement prepareStatement(final String _sql, final int _type, final int _concurrency)
             throws SQLException {
-        return prepareStatement(_sql, _type, _concurrency, holdability);
+        return prepareStatement(_sql, _type, _concurrency, m_holdability);
     }
 
     @Override
@@ -151,7 +167,7 @@ public class Db2ShellConnection implements Connection {
     public PreparedStatement prepareStatement(final String _sql, final int _autoGeneratedKeys) throws SQLException {
         checkOpen();
         return register(new Db2ShellPreparedStatement(this, _sql, ResultSet.TYPE_FORWARD_ONLY,
-                ResultSet.CONCUR_READ_ONLY, holdability, _autoGeneratedKeys, null));
+                ResultSet.CONCUR_READ_ONLY, m_holdability, _autoGeneratedKeys, null));
     }
 
     @Override
@@ -163,18 +179,18 @@ public class Db2ShellConnection implements Connection {
     public PreparedStatement prepareStatement(final String _sql, final String[] _columnNames) throws SQLException {
         checkOpen();
         return register(new Db2ShellPreparedStatement(this, _sql, ResultSet.TYPE_FORWARD_ONLY,
-                ResultSet.CONCUR_READ_ONLY, holdability, Statement.RETURN_GENERATED_KEYS, _columnNames));
+                ResultSet.CONCUR_READ_ONLY, m_holdability, Statement.RETURN_GENERATED_KEYS, _columnNames));
     }
 
     @Override
     public CallableStatement prepareCall(final String _sql) throws SQLException {
-        return prepareCall(_sql, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY, holdability);
+        return prepareCall(_sql, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY, m_holdability);
     }
 
     @Override
     public CallableStatement prepareCall(final String _sql, final int _type, final int _concurrency)
             throws SQLException {
-        return prepareCall(_sql, _type, _concurrency, holdability);
+        return prepareCall(_sql, _type, _concurrency, m_holdability);
     }
 
     @Override
@@ -185,8 +201,15 @@ public class Db2ShellConnection implements Connection {
                 _holdability));
     }
 
+    /**
+     * Maps a requested result set type to one the driver supports, adding a warning when it is downgraded.
+     *
+     * @param _type
+     *            the requested {@code ResultSet.TYPE_*} value
+     * @return the type that will actually be used ({@code TYPE_SCROLL_SENSITIVE} becomes {@code TYPE_SCROLL_INSENSITIVE})
+     */
     private int checkType(final int _type) {
-        if (_type == ResultSet.TYPE_SCROLL_SENSITIVE) {
+        if (ResultSet.TYPE_SCROLL_SENSITIVE == _type) {
             addWarning(new SQLWarning("TYPE_SCROLL_SENSITIVE is not supported; using TYPE_SCROLL_INSENSITIVE", "01S02"));
             return ResultSet.TYPE_SCROLL_INSENSITIVE;
         }
@@ -194,7 +217,7 @@ public class Db2ShellConnection implements Connection {
     }
 
     private int checkConcurrency(final int _concurrency) {
-        if (_concurrency != ResultSet.CONCUR_READ_ONLY) {
+        if (ResultSet.CONCUR_READ_ONLY != _concurrency) {
             addWarning(new SQLWarning("Updatable result sets are not supported; using CONCUR_READ_ONLY", "01S02"));
         }
         return ResultSet.CONCUR_READ_ONLY;
@@ -202,7 +225,7 @@ public class Db2ShellConnection implements Connection {
 
     @Override
     public String nativeSQL(final String _sql) throws SQLException {
-        return SqlText.parse(_sql, engine.getCharset(), true).getSql();
+        return SqlText.parse(_sql, m_engine.getCharset(), true).getSql();
     }
 
     // =================================================================================== transactions
@@ -210,29 +233,37 @@ public class Db2ShellConnection implements Connection {
     @Override
     public void setAutoCommit(final boolean _autoCommit) throws SQLException {
         checkOpen();
-        engine.setAutoCommit(_autoCommit);
+        m_engine.setAutoCommit(_autoCommit);
     }
 
     @Override
     public boolean getAutoCommit() throws SQLException {
         checkOpen();
-        return engine.getAutoCommit();
+        return m_engine.getAutoCommit();
     }
 
     @Override
     public void commit() throws SQLException {
         checkOpen();
-        engine.commit();
+        m_engine.commit();
         collectWarnings();
     }
 
     @Override
     public void rollback() throws SQLException {
         checkOpen();
-        engine.rollback();
+        m_engine.rollback();
         collectWarnings();
     }
 
+    /**
+     * Sets the transaction isolation level used when auto-commit is off.
+     *
+     * @param _level
+     *            one of the {@code Connection.TRANSACTION_*} constants
+     * @throws SQLException
+     *             if the connection is closed or the level is not a valid isolation level
+     */
     @Override
     public void setTransactionIsolation(final int _level) throws SQLException {
         checkOpen();
@@ -242,7 +273,7 @@ public class Db2ShellConnection implements Connection {
         case TRANSACTION_READ_COMMITTED:
         case TRANSACTION_REPEATABLE_READ:
         case TRANSACTION_SERIALIZABLE:
-            engine.setIsolation(_level);
+            m_engine.setIsolation(_level);
             break;
         default:
             throw new SQLException("Invalid transaction isolation level " + _level, "HY024");
@@ -252,18 +283,34 @@ public class Db2ShellConnection implements Connection {
     @Override
     public int getTransactionIsolation() throws SQLException {
         checkOpen();
-        return engine.getIsolation();
+        return m_engine.getIsolation();
     }
 
+    /**
+     * Creates an unnamed savepoint in the current transaction.
+     *
+     * @return the new savepoint, identified by a connection-unique numeric id
+     * @throws SQLException
+     *             if the connection is closed or the SAVEPOINT statement fails
+     */
     @Override
     public Savepoint setSavepoint() throws SQLException {
         checkOpen();
-        final int id = ++savepointCounter;
+        final int id = ++m_savepointCounter;
         final Db2ShellSavepoint sp = new Db2ShellSavepoint(id, null);
-        engine.savepoint(sp.sqlName());
+        m_engine.savepoint(sp.sqlName());
         return sp;
     }
 
+    /**
+     * Creates a named savepoint in the current transaction.
+     *
+     * @param _name
+     *            the savepoint name; must not be null or blank
+     * @return the new savepoint
+     * @throws SQLException
+     *             if the connection is closed, the name is empty, or the SAVEPOINT statement fails
+     */
     @Override
     public Savepoint setSavepoint(final String _name) throws SQLException {
         checkOpen();
@@ -271,47 +318,55 @@ public class Db2ShellConnection implements Connection {
             throw new SQLException("Savepoint name must not be empty", "3B001");
         }
         final Db2ShellSavepoint sp = new Db2ShellSavepoint(0, _name);
-        engine.savepoint(sp.sqlName());
+        m_engine.savepoint(sp.sqlName());
         return sp;
     }
 
     @Override
     public void rollback(final Savepoint _savepoint) throws SQLException {
         checkOpen();
-        engine.rollbackTo(Db2ShellSavepoint.sqlName(_savepoint));
+        m_engine.rollbackTo(Db2ShellSavepoint.sqlName(_savepoint));
     }
 
     @Override
     public void releaseSavepoint(final Savepoint _savepoint) throws SQLException {
         checkOpen();
-        engine.releaseSavepoint(Db2ShellSavepoint.sqlName(_savepoint));
+        m_engine.releaseSavepoint(Db2ShellSavepoint.sqlName(_savepoint));
     }
 
     // =================================================================================== misc
 
+    /**
+     * Closes every statement still open on this connection and then ends the db2 utility process. Failures
+     * closing individual statements are traced and do not stop the connection from closing. Calling this on a
+     * closed connection does nothing.
+     *
+     * @throws SQLException
+     *             declared by {@link Connection#close()}; not thrown by this implementation
+     */
     @Override
     public void close() throws SQLException {
-        if (engine.isClosed()) {
+        if (m_engine.isClosed()) {
             return;
         }
         final Statement[] open;
-        synchronized (statements) {
-            open = statements.toArray(new Statement[0]);
-            statements.clear();
+        synchronized (m_statements) {
+            open = m_statements.toArray(new Statement[0]);
+            m_statements.clear();
         }
         for (final Statement s : open) {
             try {
                 s.close();
             } catch (final SQLException e) {
-                // ignore
+                m_engine.getTracer().trace("close", "Ignoring failure closing statement: " + e);
             }
         }
-        engine.close();
+        m_engine.close();
     }
 
     @Override
     public boolean isClosed() {
-        return engine.isClosed();
+        return m_engine.isClosed();
     }
 
     @Override
@@ -323,13 +378,13 @@ public class Db2ShellConnection implements Connection {
     @Override
     public void setReadOnly(final boolean _readOnly) throws SQLException {
         checkOpen();
-        readOnly = _readOnly;
+        m_readOnly = _readOnly;
     }
 
     @Override
     public boolean isReadOnly() throws SQLException {
         checkOpen();
-        return readOnly;
+        return m_readOnly;
     }
 
     @Override
@@ -341,44 +396,44 @@ public class Db2ShellConnection implements Connection {
     @Override
     public String getCatalog() throws SQLException {
         checkOpen();
-        return engine.getServerInfo().rdbName;
+        return m_engine.getServerInfo().getRdbName();
     }
 
     @Override
     public SQLWarning getWarnings() throws SQLException {
         checkOpen();
         collectWarnings();
-        return warnings;
+        return m_warnings;
     }
 
     @Override
     public void clearWarnings() throws SQLException {
         checkOpen();
-        warnings = null;
+        m_warnings = null;
     }
 
     @Override
     public Map<String, Class<?>> getTypeMap() throws SQLException {
         checkOpen();
-        return typeMap;
+        return m_typeMap;
     }
 
     @Override
     public void setTypeMap(final Map<String, Class<?>> _map) throws SQLException {
         checkOpen();
-        typeMap = null == _map ? new HashMap<String, Class<?>>() : _map;
+        m_typeMap = null == _map ? new HashMap<String, Class<?>>() : _map;
     }
 
     @Override
     public void setHoldability(final int _holdability) throws SQLException {
         checkOpen();
-        holdability = _holdability;
+        m_holdability = _holdability;
     }
 
     @Override
     public int getHoldability() throws SQLException {
         checkOpen();
-        return holdability;
+        return m_holdability;
     }
 
     @Override
@@ -410,42 +465,60 @@ public class Db2ShellConnection implements Connection {
         if (_timeout < 0) {
             throw new SQLException("Timeout must not be negative", "HY092");
         }
-        return engine.isValid(_timeout);
+        return m_engine.isValid(_timeout);
     }
 
+    /**
+     * Sets or removes a single client info property. Client info is kept locally and is not sent to the server.
+     *
+     * @param _name
+     *            the property name
+     * @param _value
+     *            the property value, or null to remove the property
+     * @throws SQLClientInfoException
+     *             declared by {@link Connection#setClientInfo(String, String)}; not thrown by this implementation
+     */
     @Override
     public void setClientInfo(final String _name, final String _value) throws SQLClientInfoException {
         if (null == _value) {
-            clientInfo.remove(_name);
+            m_clientInfo.remove(_name);
         } else {
-            clientInfo.setProperty(_name, _value);
+            m_clientInfo.setProperty(_name, _value);
         }
     }
 
+    /**
+     * Replaces all client info properties. Client info is kept locally and is not sent to the server.
+     *
+     * @param _properties
+     *            the new set of client info properties
+     * @throws SQLClientInfoException
+     *             if the connection is closed; every property is reported as failed
+     */
     @Override
     public void setClientInfo(final Properties _properties) throws SQLClientInfoException {
-        if (engine.isClosed()) {
+        if (m_engine.isClosed()) {
             final Map<String, ClientInfoStatus> failed = new HashMap<String, ClientInfoStatus>();
             for (final String n : _properties.stringPropertyNames()) {
                 failed.put(n, ClientInfoStatus.REASON_UNKNOWN);
             }
             throw new SQLClientInfoException("Connection is closed", failed);
         }
-        clientInfo.clear();
-        clientInfo.putAll(_properties);
+        m_clientInfo.clear();
+        m_clientInfo.putAll(_properties);
     }
 
     @Override
     public String getClientInfo(final String _name) throws SQLException {
         checkOpen();
-        return clientInfo.getProperty(_name);
+        return m_clientInfo.getProperty(_name);
     }
 
     @Override
     public Properties getClientInfo() throws SQLException {
         checkOpen();
         final Properties p = new Properties();
-        p.putAll(clientInfo);
+        p.putAll(m_clientInfo);
         return p;
     }
 
@@ -459,6 +532,15 @@ public class Db2ShellConnection implements Connection {
         throw SqlErrors.unsupported("createStruct");
     }
 
+    /**
+     * Sets the default schema by running {@code SET SCHEMA}. A name that is not already quoted is quoted, so
+     * it is used exactly as given (case-sensitive). A null schema is ignored.
+     *
+     * @param _schema
+     *            the schema name, or null to leave the current schema unchanged
+     * @throws SQLException
+     *             if the connection is closed or the SET SCHEMA statement fails
+     */
     @Override
     public void setSchema(final String _schema) throws SQLException {
         checkOpen();
@@ -467,25 +549,34 @@ public class Db2ShellConnection implements Connection {
         }
         final String ident = _schema.startsWith("\"") ? _schema : "\"" + _schema.replace("\"", "\"\"") + "\"";
         final java.util.List<SQLWarning> w = new java.util.ArrayList<SQLWarning>();
-        engine.update("SET SCHEMA " + ident, "SET", 0, w);
+        m_engine.update("SET SCHEMA " + ident, "SET", 0, w);
     }
 
     @Override
     public String getSchema() throws SQLException {
         checkOpen();
-        return engine.queryValue("VALUES CURRENT SCHEMA");
+        return m_engine.queryValue("VALUES CURRENT SCHEMA");
     }
 
+    /**
+     * Aborts the connection: cancels any running statement immediately and closes the db2 utility process on
+     * the given executor.
+     *
+     * @param _executor
+     *            the executor used to perform the close; must not be null
+     * @throws SQLException
+     *             if the executor is null
+     */
     @Override
     public void abort(final Executor _executor) throws SQLException {
         if (null == _executor) {
             throw new SQLException("Executor must not be null", "HY009");
         }
-        engine.cancel();
+        m_engine.cancel();
         _executor.execute(new Runnable() {
             @Override
             public void run() {
-                engine.close();
+                m_engine.close();
             }
         });
     }
@@ -493,13 +584,13 @@ public class Db2ShellConnection implements Connection {
     @Override
     public void setNetworkTimeout(final Executor _executor, final int _milliseconds) throws SQLException {
         checkOpen();
-        networkTimeout = _milliseconds;
+        m_networkTimeout = _milliseconds;
     }
 
     @Override
     public int getNetworkTimeout() throws SQLException {
         checkOpen();
-        return networkTimeout;
+        return m_networkTimeout;
     }
 
     @Override
@@ -517,11 +608,11 @@ public class Db2ShellConnection implements Connection {
 
     /** The job running the db2 utility, e.g. {@code 123456/QUSER/QP0ZSPWP}. */
     public String getJobName() throws SQLException {
-        return engine.getServerInfo().jobName;
+        return m_engine.getServerInfo().getJobName();
     }
 
     /** The charset used to talk to the db2 utility. */
     public java.nio.charset.Charset getEncoding() {
-        return engine.getCharset();
+        return m_engine.getCharset();
     }
 }

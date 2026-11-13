@@ -17,40 +17,57 @@ public final class ProcessTransport implements Transport {
     /** Statement terminator passed to the utility with -T. Must be an EBCDIC-invariant character. */
     public static final char TERMINATOR = '%';
 
-    private final Process process;
-    private final PumpedInputStream stdout;
-    private final ByteArrayOutputStream stderr = new ByteArrayOutputStream();
-    private final Charset charset;
-    private final Thread stderrPump;
+    private final Process m_process;
+    private final PumpedInputStream m_stdout;
+    private final ByteArrayOutputStream m_stderr = new ByteArrayOutputStream();
+    private final Charset m_charset;
+    private final Thread m_stderrPump;
+    private final Tracer m_tracer;
 
-    private ProcessTransport(final Process _p, final Charset _cs) {
-        process = _p;
-        charset = _cs;
-        stdout = new PumpedInputStream(_p.getInputStream(), "db2shell-stdout");
-        stderrPump = new Thread(new Runnable() {
+    /**
+     * Wraps a started process and starts the daemon threads that drain its standard output and standard error.
+     *
+     * @param _p the running qsh process
+     * @param _cs the encoding of the process output
+     * @param _tracer receives diagnostics
+     */
+    private ProcessTransport(final Process _p, final Charset _cs, final Tracer _tracer) {
+        m_process = _p;
+        m_charset = _cs;
+        m_tracer = _tracer;
+        m_stdout = new PumpedInputStream(_p.getInputStream(), "db2shell-stdout");
+        m_stderrPump = new Thread(new Runnable() {
+            /** Copies standard error (up to 64K) into the buffer reported by {@code getErrorText()}. */
             @Override
             public void run() {
                 final byte[] b = new byte[4096];
-                final InputStream es = process.getErrorStream();
+                final InputStream es = m_process.getErrorStream();
                 try {
                     int n;
                     while ((n = es.read(b)) > 0) {
-                        synchronized (stderr) {
-                            if (stderr.size() < 64 * 1024) {
-                                stderr.write(b, 0, n);
+                        synchronized (m_stderr) {
+                            if (m_stderr.size() < 64 * 1024) {
+                                m_stderr.write(b, 0, n);
                             }
                         }
                     }
                 } catch (final IOException e) {
-                    // process ended
+                    // expected when the process ends
+                    m_tracer.trace("stderr", e);
                 }
             }
         }, "db2shell-stderr");
-        stderrPump.setDaemon(true);
-        stderrPump.start();
+        m_stderrPump.setDaemon(true);
+        m_stderrPump.start();
     }
 
-    /** Builds the qsh command line for the given configuration. Visible for testing. */
+    /**
+     * Builds the qsh command line for the given configuration. Visible for testing. The result contains the password
+     * and must never be traced or logged as is.
+     *
+     * @param _cfg the connection configuration
+     * @return the shell command that starts the db2 utility
+     */
     public static String buildCommand(final DriverConfig _cfg) {
         final StringBuilder cmd = new StringBuilder();
         cmd.append(shellQuote(_cfg.getDb2Path())).append(" -i -T").append(TERMINATOR);
@@ -64,6 +81,14 @@ public final class ProcessTransport implements Transport {
         return cmd.toString();
     }
 
+    /**
+     * Launches the db2 utility through qsh. The traced command line has the password masked.
+     *
+     * @param _cfg the connection configuration
+     * @param _tracer receives diagnostics for this transport
+     * @return the transport for the started process
+     * @throws IOException if the process cannot be started
+     */
     public static ProcessTransport start(final DriverConfig _cfg, final Tracer _tracer) throws IOException {
         final List<String> args = new ArrayList<String>();
         args.add(_cfg.getQshPath());
@@ -75,7 +100,7 @@ public final class ProcessTransport implements Transport {
         }
         final ProcessBuilder pb = new ProcessBuilder(args);
         pb.redirectErrorStream(false);
-        return new ProcessTransport(pb.start(), _cfg.getCharset());
+        return new ProcessTransport(pb.start(), _cfg.getCharset(), _tracer);
     }
 
     static String shellQuote(final String _s) {
@@ -84,27 +109,33 @@ public final class ProcessTransport implements Transport {
 
     @Override
     public InputStream getInput() {
-        return stdout;
+        return m_stdout;
     }
 
     @Override
     public OutputStream getOutput() {
-        return process.getOutputStream();
+        return m_process.getOutputStream();
     }
 
     @Override
     public String getErrorText() {
-        synchronized (stderr) {
-            return new String(stderr.toByteArray(), charset).trim();
+        synchronized (m_stderr) {
+            return new String(m_stderr.toByteArray(), m_charset).trim();
         }
     }
 
+    /**
+     * Tells whether the qsh process is still running.
+     *
+     * @return true while the process has not exited
+     */
     @Override
     public boolean isAlive() {
         try {
-            process.exitValue();
+            m_process.exitValue();
             return false;
         } catch (final IllegalThreadStateException e) {
+            // thrown by exitValue() precisely when the process has not exited yet
             return true;
         }
     }
@@ -113,6 +144,9 @@ public final class ProcessTransport implements Transport {
      * Asks Db2 to end the SQL statement running in the given job, using {@code QSYS2.CANCEL_SQL} from a separate,
      * short-lived db2 utility process. The cancelled statement fails with SQLSTATE 57014 and the session survives.
      *
+     * @param _cfg the connection configuration (paths and encoding of the utility)
+     * @param _jobName the qualified name (number/user/name) of the job running the statement
+     * @param _tracer receives diagnostics
      * @return true if the cancel request was accepted
      */
     public static boolean cancelSql(final DriverConfig _cfg, final String _jobName, final Tracer _tracer) {
@@ -147,41 +181,49 @@ public final class ProcessTransport implements Transport {
         }
     }
 
+    /**
+     * Releases any blocked reader and terminates the process, forcibly if it does not end within two seconds. Safe to
+     * call from any thread, any number of times.
+     */
     @Override
     public void kill() {
         // release any reader first: a job started by qsh may keep the pipe open after qsh itself ends
-        stdout.abort();
-        process.destroy();
+        m_stdout.abort();
+        m_process.destroy();
         try {
-            if (!process.waitFor(2, TimeUnit.SECONDS)) {
-                process.destroyForcibly();
+            if (!m_process.waitFor(2, TimeUnit.SECONDS)) {
+                m_process.destroyForcibly();
             }
         } catch (final InterruptedException e) {
-            process.destroyForcibly();
+            m_process.destroyForcibly();
             Thread.currentThread().interrupt();
         }
     }
 
+    /**
+     * Closes the utility's standard input and waits up to five seconds for it to end, killing it otherwise, then
+     * releases any blocked reader.
+     */
     @Override
     public void close() {
         try {
-            process.getOutputStream().close();
+            m_process.getOutputStream().close();
         } catch (final IOException e) {
-            // ignore
+            m_tracer.trace("close", e);
         }
         try {
-            if (!process.waitFor(5, TimeUnit.SECONDS)) {
+            if (!m_process.waitFor(5, TimeUnit.SECONDS)) {
                 kill();
             }
         } catch (final InterruptedException e) {
             kill();
             Thread.currentThread().interrupt();
         }
-        stdout.abort();
+        m_stdout.abort();
         try {
-            process.getInputStream().close();
+            m_process.getInputStream().close();
         } catch (final IOException e) {
-            // ignore
+            m_tracer.trace("close", e);
         }
     }
 }

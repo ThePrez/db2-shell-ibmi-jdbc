@@ -21,31 +21,38 @@ import javax.sql.DataSource;
  */
 public class Db2ShellDataSource implements DataSource {
 
-    private String url = DriverConfig.URL_PREFIX;
-    private final Properties properties = new Properties();
-    private PrintWriter logWriter;
-    private int loginTimeout = 0;
+    private String m_url = DriverConfig.URL_PREFIX;
+    private final Properties m_properties = new Properties();
+    private PrintWriter m_logWriter;
+    private int m_loginTimeout = 0;
 
     public String getUrl() {
-        return url;
+        return m_url;
     }
 
     /** Sets the full JDBC URL (properties may also be embedded in it). */
     public void setUrl(final String _url) {
-        url = _url;
+        m_url = _url;
     }
 
-    /** Sets any driver property (see the README for the list). */
+    /**
+     * Sets any driver property (see the README for the list).
+     *
+     * @param _name
+     *            the property name
+     * @param _value
+     *            the property value, or null to remove the property
+     */
     public void setProperty(final String _name, final String _value) {
         if (null == _value) {
-            properties.remove(_name);
+            m_properties.remove(_name);
         } else {
-            properties.setProperty(_name, _value);
+            m_properties.setProperty(_name, _value);
         }
     }
 
     public String getProperty(final String _name) {
-        return properties.getProperty(_name);
+        return m_properties.getProperty(_name);
     }
 
     public void setUser(final String _user) {
@@ -64,47 +71,67 @@ public class Db2ShellDataSource implements DataSource {
         setProperty(DriverConfig.P_ENCODING, _encoding);
     }
 
+    /**
+     * Opens a new connection (a new db2 utility process) using the configured URL and properties. A non-zero
+     * login timeout is used as the startup timeout unless that property was set explicitly.
+     *
+     * @return the new connection
+     * @throws SQLException
+     *             if the configuration is invalid or the db2 utility cannot be started
+     */
     @Override
     public Connection getConnection() throws SQLException {
         final Properties p = new Properties();
-        p.putAll(properties);
-        if (loginTimeout > 0 && null == p.getProperty(DriverConfig.P_STARTUP_TIMEOUT)) {
-            p.setProperty(DriverConfig.P_STARTUP_TIMEOUT, Integer.toString(loginTimeout));
+        p.putAll(m_properties);
+        if (m_loginTimeout > 0 && null == p.getProperty(DriverConfig.P_STARTUP_TIMEOUT)) {
+            p.setProperty(DriverConfig.P_STARTUP_TIMEOUT, Integer.toString(m_loginTimeout));
         }
-        return Db2ShellConnection.open(DriverConfig.parse(url, p));
+        return Db2ShellConnection.open(DriverConfig.parse(m_url, p));
     }
 
+    /**
+     * Opens a new connection (a new db2 utility process) using the configured URL and properties, overriding
+     * the user and password. Unlike {@link #getConnection()}, the login timeout is not applied.
+     *
+     * @param _user
+     *            the user profile, or null to keep the configured one
+     * @param _password
+     *            the password, or null to keep the configured one
+     * @return the new connection
+     * @throws SQLException
+     *             if the configuration is invalid or the db2 utility cannot be started
+     */
     @Override
     public Connection getConnection(final String _user, final String _password) throws SQLException {
         final Properties p = new Properties();
-        p.putAll(properties);
+        p.putAll(m_properties);
         if (null != _user) {
             p.setProperty(DriverConfig.P_USER, _user);
         }
         if (null != _password) {
             p.setProperty(DriverConfig.P_PASSWORD, _password);
         }
-        return Db2ShellConnection.open(DriverConfig.parse(url, p));
+        return Db2ShellConnection.open(DriverConfig.parse(m_url, p));
     }
 
     @Override
     public PrintWriter getLogWriter() {
-        return logWriter;
+        return m_logWriter;
     }
 
     @Override
     public void setLogWriter(final PrintWriter _out) {
-        logWriter = _out;
+        m_logWriter = _out;
     }
 
     @Override
     public void setLoginTimeout(final int _seconds) {
-        loginTimeout = _seconds;
+        m_loginTimeout = _seconds;
     }
 
     @Override
     public int getLoginTimeout() {
-        return loginTimeout;
+        return m_loginTimeout;
     }
 
     @Override

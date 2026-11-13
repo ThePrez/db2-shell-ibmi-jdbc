@@ -29,97 +29,189 @@ abstract class ReadOnlyResultSet implements ResultSet {
                 + "use an UPDATE/INSERT/DELETE statement instead", "0A000");
     }
 
-    @Override public boolean rowUpdated() throws SQLException { return false; }
-    @Override public boolean rowInserted() throws SQLException { return false; }
-    @Override public boolean rowDeleted() throws SQLException { return false; }
-    @Override public void insertRow() throws SQLException { throw readOnly(); }
-    @Override public void updateRow() throws SQLException { throw readOnly(); }
-    @Override public void deleteRow() throws SQLException { throw readOnly(); }
-    @Override public void refreshRow() throws SQLException { throw readOnly(); }
-    @Override public void cancelRowUpdates() throws SQLException { throw readOnly(); }
-    @Override public void moveToInsertRow() throws SQLException { throw readOnly(); }
-    @Override public void moveToCurrentRow() throws SQLException { throw readOnly(); }
+    @Override
+    public boolean rowUpdated() throws SQLException { return false; }
+    @Override
+    public boolean rowInserted() throws SQLException { return false; }
+    @Override
+    public boolean rowDeleted() throws SQLException { return false; }
+    @Override
+    public void insertRow() throws SQLException { throw readOnly(); }
+    @Override
+    public void updateRow() throws SQLException { throw readOnly(); }
+    @Override
+    public void deleteRow() throws SQLException { throw readOnly(); }
+    @Override
+    public void refreshRow() throws SQLException { throw readOnly(); }
+    @Override
+    public void cancelRowUpdates() throws SQLException { throw readOnly(); }
+    @Override
+    public void moveToInsertRow() throws SQLException { throw readOnly(); }
+    @Override
+    public void moveToCurrentRow() throws SQLException { throw readOnly(); }
 
-    @Override public void updateNull(int _c) throws SQLException { throw readOnly(); }
-    @Override public void updateNull(String _l) throws SQLException { throw readOnly(); }
-    @Override public void updateBoolean(int _c, boolean _x) throws SQLException { throw readOnly(); }
-    @Override public void updateBoolean(String _l, boolean _x) throws SQLException { throw readOnly(); }
-    @Override public void updateByte(int _c, byte _x) throws SQLException { throw readOnly(); }
-    @Override public void updateByte(String _l, byte _x) throws SQLException { throw readOnly(); }
-    @Override public void updateShort(int _c, short _x) throws SQLException { throw readOnly(); }
-    @Override public void updateShort(String _l, short _x) throws SQLException { throw readOnly(); }
-    @Override public void updateInt(int _c, int _x) throws SQLException { throw readOnly(); }
-    @Override public void updateInt(String _l, int _x) throws SQLException { throw readOnly(); }
-    @Override public void updateLong(int _c, long _x) throws SQLException { throw readOnly(); }
-    @Override public void updateLong(String _l, long _x) throws SQLException { throw readOnly(); }
-    @Override public void updateFloat(int _c, float _x) throws SQLException { throw readOnly(); }
-    @Override public void updateFloat(String _l, float _x) throws SQLException { throw readOnly(); }
-    @Override public void updateDouble(int _c, double _x) throws SQLException { throw readOnly(); }
-    @Override public void updateDouble(String _l, double _x) throws SQLException { throw readOnly(); }
-    @Override public void updateBigDecimal(int _c, BigDecimal _x) throws SQLException { throw readOnly(); }
-    @Override public void updateBigDecimal(String _l, BigDecimal _x) throws SQLException { throw readOnly(); }
-    @Override public void updateString(int _c, String _x) throws SQLException { throw readOnly(); }
-    @Override public void updateString(String _l, String _x) throws SQLException { throw readOnly(); }
-    @Override public void updateBytes(int _c, byte[] _x) throws SQLException { throw readOnly(); }
-    @Override public void updateBytes(String _l, byte[] _x) throws SQLException { throw readOnly(); }
-    @Override public void updateDate(int _c, Date _x) throws SQLException { throw readOnly(); }
-    @Override public void updateDate(String _l, Date _x) throws SQLException { throw readOnly(); }
-    @Override public void updateTime(int _c, Time _x) throws SQLException { throw readOnly(); }
-    @Override public void updateTime(String _l, Time _x) throws SQLException { throw readOnly(); }
-    @Override public void updateTimestamp(int _c, Timestamp _x) throws SQLException { throw readOnly(); }
-    @Override public void updateTimestamp(String _l, Timestamp _x) throws SQLException { throw readOnly(); }
-    @Override public void updateAsciiStream(int _c, InputStream _x, int _n) throws SQLException { throw readOnly(); }
-    @Override public void updateAsciiStream(String _l, InputStream _x, int _n) throws SQLException { throw readOnly(); }
-    @Override public void updateBinaryStream(int _c, InputStream _x, int _n) throws SQLException { throw readOnly(); }
-    @Override public void updateBinaryStream(String _l, InputStream _x, int _n) throws SQLException { throw readOnly(); }
-    @Override public void updateCharacterStream(int _c, Reader _x, int _n) throws SQLException { throw readOnly(); }
-    @Override public void updateCharacterStream(String _l, Reader _x, int _n) throws SQLException { throw readOnly(); }
-    @Override public void updateObject(int _c, Object _x, int _n) throws SQLException { throw readOnly(); }
-    @Override public void updateObject(String _l, Object _x, int _n) throws SQLException { throw readOnly(); }
-    @Override public void updateObject(int _c, Object _x) throws SQLException { throw readOnly(); }
-    @Override public void updateObject(String _l, Object _x) throws SQLException { throw readOnly(); }
-    @Override public void updateRef(int _c, Ref _x) throws SQLException { throw readOnly(); }
-    @Override public void updateRef(String _l, Ref _x) throws SQLException { throw readOnly(); }
-    @Override public void updateBlob(int _c, Blob _x) throws SQLException { throw readOnly(); }
-    @Override public void updateBlob(String _l, Blob _x) throws SQLException { throw readOnly(); }
-    @Override public void updateClob(int _c, Clob _x) throws SQLException { throw readOnly(); }
-    @Override public void updateClob(String _l, Clob _x) throws SQLException { throw readOnly(); }
-    @Override public void updateArray(int _c, Array _x) throws SQLException { throw readOnly(); }
-    @Override public void updateArray(String _l, Array _x) throws SQLException { throw readOnly(); }
-    @Override public void updateRowId(int _c, RowId _x) throws SQLException { throw readOnly(); }
-    @Override public void updateRowId(String _l, RowId _x) throws SQLException { throw readOnly(); }
-    @Override public void updateNString(int _c, String _x) throws SQLException { throw readOnly(); }
-    @Override public void updateNString(String _l, String _x) throws SQLException { throw readOnly(); }
-    @Override public void updateNClob(int _c, NClob _x) throws SQLException { throw readOnly(); }
-    @Override public void updateNClob(String _l, NClob _x) throws SQLException { throw readOnly(); }
-    @Override public void updateSQLXML(int _c, SQLXML _x) throws SQLException { throw readOnly(); }
-    @Override public void updateSQLXML(String _l, SQLXML _x) throws SQLException { throw readOnly(); }
-    @Override public void updateNCharacterStream(int _c, Reader _x, long _n) throws SQLException { throw readOnly(); }
-    @Override public void updateNCharacterStream(String _l, Reader _x, long _n) throws SQLException { throw readOnly(); }
-    @Override public void updateAsciiStream(int _c, InputStream _x, long _n) throws SQLException { throw readOnly(); }
-    @Override public void updateAsciiStream(String _l, InputStream _x, long _n) throws SQLException { throw readOnly(); }
-    @Override public void updateBinaryStream(int _c, InputStream _x, long _n) throws SQLException { throw readOnly(); }
-    @Override public void updateBinaryStream(String _l, InputStream _x, long _n) throws SQLException { throw readOnly(); }
-    @Override public void updateCharacterStream(int _c, Reader _x, long _n) throws SQLException { throw readOnly(); }
-    @Override public void updateCharacterStream(String _l, Reader _x, long _n) throws SQLException { throw readOnly(); }
-    @Override public void updateBlob(int _c, InputStream _x, long _n) throws SQLException { throw readOnly(); }
-    @Override public void updateBlob(String _l, InputStream _x, long _n) throws SQLException { throw readOnly(); }
-    @Override public void updateClob(int _c, Reader _x, long _n) throws SQLException { throw readOnly(); }
-    @Override public void updateClob(String _l, Reader _x, long _n) throws SQLException { throw readOnly(); }
-    @Override public void updateNClob(int _c, Reader _x, long _n) throws SQLException { throw readOnly(); }
-    @Override public void updateNClob(String _l, Reader _x, long _n) throws SQLException { throw readOnly(); }
-    @Override public void updateNCharacterStream(int _c, Reader _x) throws SQLException { throw readOnly(); }
-    @Override public void updateNCharacterStream(String _l, Reader _x) throws SQLException { throw readOnly(); }
-    @Override public void updateAsciiStream(int _c, InputStream _x) throws SQLException { throw readOnly(); }
-    @Override public void updateAsciiStream(String _l, InputStream _x) throws SQLException { throw readOnly(); }
-    @Override public void updateBinaryStream(int _c, InputStream _x) throws SQLException { throw readOnly(); }
-    @Override public void updateBinaryStream(String _l, InputStream _x) throws SQLException { throw readOnly(); }
-    @Override public void updateCharacterStream(int _c, Reader _x) throws SQLException { throw readOnly(); }
-    @Override public void updateCharacterStream(String _l, Reader _x) throws SQLException { throw readOnly(); }
-    @Override public void updateBlob(int _c, InputStream _x) throws SQLException { throw readOnly(); }
-    @Override public void updateBlob(String _l, InputStream _x) throws SQLException { throw readOnly(); }
-    @Override public void updateClob(int _c, Reader _x) throws SQLException { throw readOnly(); }
-    @Override public void updateClob(String _l, Reader _x) throws SQLException { throw readOnly(); }
-    @Override public void updateNClob(int _c, Reader _x) throws SQLException { throw readOnly(); }
-    @Override public void updateNClob(String _l, Reader _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateNull(final int _c) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateNull(final String _l) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBoolean(final int _c, final boolean _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBoolean(final String _l, final boolean _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateByte(final int _c, final byte _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateByte(final String _l, final byte _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateShort(final int _c, final short _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateShort(final String _l, final short _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateInt(final int _c, final int _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateInt(final String _l, final int _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateLong(final int _c, final long _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateLong(final String _l, final long _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateFloat(final int _c, final float _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateFloat(final String _l, final float _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateDouble(final int _c, final double _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateDouble(final String _l, final double _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBigDecimal(final int _c, final BigDecimal _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBigDecimal(final String _l, final BigDecimal _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateString(final int _c, final String _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateString(final String _l, final String _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBytes(final int _c, final byte[] _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBytes(final String _l, final byte[] _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateDate(final int _c, final Date _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateDate(final String _l, final Date _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateTime(final int _c, final Time _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateTime(final String _l, final Time _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateTimestamp(final int _c, final Timestamp _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateTimestamp(final String _l, final Timestamp _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateAsciiStream(final int _c, final InputStream _x, final int _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateAsciiStream(final String _l, final InputStream _x, final int _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBinaryStream(final int _c, final InputStream _x, final int _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBinaryStream(final String _l, final InputStream _x, final int _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateCharacterStream(final int _c, final Reader _x, final int _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateCharacterStream(final String _l, final Reader _x, final int _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateObject(final int _c, final Object _x, final int _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateObject(final String _l, final Object _x, final int _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateObject(final int _c, final Object _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateObject(final String _l, final Object _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateRef(final int _c, final Ref _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateRef(final String _l, final Ref _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBlob(final int _c, final Blob _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBlob(final String _l, final Blob _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateClob(final int _c, final Clob _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateClob(final String _l, final Clob _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateArray(final int _c, final Array _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateArray(final String _l, final Array _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateRowId(final int _c, final RowId _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateRowId(final String _l, final RowId _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateNString(final int _c, final String _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateNString(final String _l, final String _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateNClob(final int _c, final NClob _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateNClob(final String _l, final NClob _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateSQLXML(final int _c, final SQLXML _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateSQLXML(final String _l, final SQLXML _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateNCharacterStream(final int _c, final Reader _x, final long _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateNCharacterStream(final String _l, final Reader _x, final long _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateAsciiStream(final int _c, final InputStream _x, final long _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateAsciiStream(final String _l, final InputStream _x, final long _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBinaryStream(final int _c, final InputStream _x, final long _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBinaryStream(final String _l, final InputStream _x, final long _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateCharacterStream(final int _c, final Reader _x, final long _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateCharacterStream(final String _l, final Reader _x, final long _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBlob(final int _c, final InputStream _x, final long _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBlob(final String _l, final InputStream _x, final long _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateClob(final int _c, final Reader _x, final long _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateClob(final String _l, final Reader _x, final long _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateNClob(final int _c, final Reader _x, final long _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateNClob(final String _l, final Reader _x, final long _n) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateNCharacterStream(final int _c, final Reader _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateNCharacterStream(final String _l, final Reader _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateAsciiStream(final int _c, final InputStream _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateAsciiStream(final String _l, final InputStream _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBinaryStream(final int _c, final InputStream _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBinaryStream(final String _l, final InputStream _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateCharacterStream(final int _c, final Reader _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateCharacterStream(final String _l, final Reader _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBlob(final int _c, final InputStream _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateBlob(final String _l, final InputStream _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateClob(final int _c, final Reader _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateClob(final String _l, final Reader _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateNClob(final int _c, final Reader _x) throws SQLException { throw readOnly(); }
+    @Override
+    public void updateNClob(final String _l, final Reader _x) throws SQLException { throw readOnly(); }
 }

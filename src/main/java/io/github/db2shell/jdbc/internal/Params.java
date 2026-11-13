@@ -47,6 +47,15 @@ public final class Params {
         return null == t ? "NULL" : "CAST(NULL AS " + t + ")";
     }
 
+    /**
+     * The SQL type to cast an untyped NULL to for the given JDBC type.
+     *
+     * @param _sqlType
+     *            a {@link Types} constant
+     * @param _booleanSupported
+     *            whether the server has a BOOLEAN type (otherwise SMALLINT is used)
+     * @return the SQL type, or null if a plain NULL should be used
+     */
     static String castType(final int _sqlType, final boolean _booleanSupported) {
         switch (_sqlType) {
         case Types.CHAR:
@@ -106,18 +115,34 @@ public final class Params {
      * @param _scale scale for DECIMAL/NUMERIC targets, or -1
      * @param _cs the job charset
      * @param _booleanSupported whether the server has a BOOLEAN type (IBM i 7.5+)
+     * @return the SQL literal (or expression) to substitute for the parameter marker
+     * @throws SQLException if the value cannot be converted to the target type or its type is not supported
      */
     public static String literal(final Object _v, final int _targetType, final int _scale, final Charset _cs,
             final boolean _booleanSupported) throws SQLException {
         if (null == _v) {
-            return _targetType == UNSPECIFIED ? "NULL" : nullLiteral(_targetType, _booleanSupported);
+            return UNSPECIFIED == _targetType ? "NULL" : nullLiteral(_targetType, _booleanSupported);
         }
-        if (_targetType != UNSPECIFIED) {
+        if (UNSPECIFIED != _targetType) {
             return literalForTarget(_v, _targetType, _scale, _cs, _booleanSupported);
         }
         return literalForValue(_v, _cs, _booleanSupported);
     }
 
+    /**
+     * Builds the literal for a value with no target type, choosing the SQL type from the Java type. LOBs and
+     * streams are read fully; types without a dedicated mapping are sent as their string form.
+     *
+     * @param _v
+     *            the value (not null)
+     * @param _cs
+     *            the job charset
+     * @param _bool
+     *            whether the server has a BOOLEAN type
+     * @return the SQL literal
+     * @throws SQLException
+     *             if a LOB or stream cannot be read, or the value is an unsupported ARRAY, STRUCT or REF
+     */
     private static String literalForValue(final Object _v, final Charset _cs, final boolean _bool) throws SQLException {
         if (_v instanceof String) {
             return SqlLiterals.string((String) _v, _cs);
@@ -210,6 +235,23 @@ public final class Params {
         return SqlLiterals.string(_v.toString(), _cs);
     }
 
+    /**
+     * Builds the literal for a value converted to the given target type.
+     *
+     * @param _v
+     *            the value (not null)
+     * @param _t
+     *            the target {@link Types} constant
+     * @param _scale
+     *            scale for DECIMAL/NUMERIC targets, or -1 to keep the value's scale
+     * @param _cs
+     *            the job charset
+     * @param _bool
+     *            whether the server has a BOOLEAN type
+     * @return the SQL literal
+     * @throws SQLException
+     *             if the value cannot be converted to the target type
+     */
     private static String literalForTarget(final Object _v, final int _t, final int _scale, final Charset _cs,
             final boolean _bool) throws SQLException {
         switch (_t) {
@@ -279,6 +321,13 @@ public final class Params {
         }
     }
 
+    /**
+     * Converts java.time and plain java.util.Date values to the java.sql type {@link Values} understands.
+     *
+     * @param _v
+     *            the value
+     * @return the java.sql date/time value, or the value itself if no conversion applies
+     */
     private static Object asTemporalValue(final Object _v) {
         if (_v instanceof LocalDate) {
             return Date.valueOf((LocalDate) _v);
@@ -308,6 +357,13 @@ public final class Params {
         return q >= 0 && e > q ? _lit.substring(q + 1, e) : _lit;
     }
 
+    /**
+     * A decimal literal, or a DECFLOAT expression when the value has more digits than a DECIMAL literal allows.
+     *
+     * @param _bd
+     *            the value
+     * @return the SQL literal
+     */
     static String decimal(final BigDecimal _bd) {
         final String s = _bd.toPlainString();
         // DECIMAL literals are limited to 63 digits; fall back to DECFLOAT for anything larger
@@ -317,6 +373,15 @@ public final class Params {
         return s;
     }
 
+    /**
+     * A floating point literal (always with an exponent, so the server treats it as DOUBLE).
+     *
+     * @param _d
+     *            the value
+     * @return the SQL literal
+     * @throws SQLException
+     *             if the value is NaN or infinite, which have no SQL literal
+     */
     static String doubleLiteral(final double _d) throws SQLException {
         if (Double.isNaN(_d) || Double.isInfinite(_d)) {
             throw new SQLDataException("Cannot send " + _d + " as a DOUBLE parameter", "22003");

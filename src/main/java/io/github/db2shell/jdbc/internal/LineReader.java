@@ -10,35 +10,44 @@ import java.util.Arrays;
  */
 public final class LineReader {
 
-    private final InputStream in;
-    private final byte newline;
-    private final byte[] prompt;
-    private final byte[] buf = new byte[64 * 1024];
-    private int pos = 0;
-    private int lim = 0;
-    private byte[] pushback = null;
-    private boolean eof = false;
+    private final InputStream m_in;
+    private final byte m_newline;
+    private final byte[] m_prompt;
+    private final byte[] m_buf = new byte[64 * 1024];
+    private int m_pos = 0;
+    private int m_lim = 0;
+    private byte[] m_pushback = null;
+    private boolean m_eof = false;
 
     /**
+     * @param _in the stream to read lines from
+     * @param _newline the byte that ends a line
      * @param _prompt the interactive prompt; the utility prints it without a newline, so a line consisting of
      *            exactly these bytes is returned as soon as no further output is pending (may be null)
      */
     public LineReader(final InputStream _in, final byte _newline, final byte[] _prompt) {
-        in = _in;
-        newline = _newline;
-        prompt = _prompt;
+        m_in = _in;
+        m_newline = _newline;
+        m_prompt = _prompt;
     }
 
     public LineReader(final InputStream _in, final byte _newline) {
         this(_in, _newline, null);
     }
 
+    /**
+     * Tells whether the first {@code _len} bytes of {@code _acc} are exactly the prompt.
+     *
+     * @param _acc the accumulated bytes of the current, unterminated line
+     * @param _len the number of valid bytes in {@code _acc}
+     * @return true if a prompt is configured and the bytes match it
+     */
     private boolean isPrompt(final byte[] _acc, final int _len) {
-        if (null == prompt || _len != prompt.length) {
+        if (null == m_prompt || _len != m_prompt.length) {
             return false;
         }
         for (int i = 0; i < _len; i++) {
-            if (_acc[i] != prompt[i]) {
+            if (_acc[i] != m_prompt[i]) {
                 return false;
             }
         }
@@ -52,10 +61,10 @@ public final class LineReader {
 
     /** Pushes a line back so that the next {@link #readLine()} returns it. Only one line can be pushed back. */
     public void unread(final byte[] _line) {
-        if (null != pushback) {
+        if (null != m_pushback) {
             throw new IllegalStateException("pushback already in use");
         }
-        pushback = _line;
+        m_pushback = _line;
     }
 
     /**
@@ -67,43 +76,51 @@ public final class LineReader {
         return read(false);
     }
 
+    /**
+     * Returns the pushed-back line if there is one, otherwise reads the next line from the stream. An unterminated
+     * final line is returned as is at end of stream.
+     *
+     * @param _promptAware true to return an unterminated prompt as a line as soon as no further input is available
+     * @return the line without its newline byte, or null at end of stream
+     * @throws IOException if reading the underlying stream fails
+     */
     private byte[] read(final boolean _promptAware) throws IOException {
-        if (null != pushback) {
-            final byte[] ret = pushback;
-            pushback = null;
+        if (null != m_pushback) {
+            final byte[] ret = m_pushback;
+            m_pushback = null;
             return ret;
         }
         byte[] acc = null;
         int accLen = 0;
         while (true) {
-            if (pos >= lim) {
-                if (_promptAware && null != acc && isPrompt(acc, accLen) && in.available() <= 0) {
+            if (m_pos >= m_lim) {
+                if (_promptAware && null != acc && isPrompt(acc, accLen) && m_in.available() <= 0) {
                     // the prompt is waiting for input; its newline will only arrive with the next response
                     return Arrays.copyOf(acc, accLen);
                 }
-                if (eof || !fill()) {
-                    eof = true;
+                if (m_eof || !fill()) {
+                    m_eof = true;
                     if (null == acc) {
                         return null;
                     }
                     return Arrays.copyOf(acc, accLen);
                 }
             }
-            int i = pos;
-            while (i < lim && buf[i] != newline) {
+            int i = m_pos;
+            while (i < m_lim && m_buf[i] != m_newline) {
                 i++;
             }
-            final int n = i - pos;
-            if (i < lim) {
+            final int n = i - m_pos;
+            if (i < m_lim) {
                 // found newline
                 final byte[] line;
                 if (null == acc) {
-                    line = Arrays.copyOfRange(buf, pos, i);
+                    line = Arrays.copyOfRange(m_buf, m_pos, i);
                 } else {
                     line = Arrays.copyOf(acc, accLen + n);
-                    System.arraycopy(buf, pos, line, accLen, n);
+                    System.arraycopy(m_buf, m_pos, line, accLen, n);
                 }
-                pos = i + 1;
+                m_pos = i + 1;
                 return line;
             }
             // no newline in buffer: accumulate and refill
@@ -112,19 +129,25 @@ public final class LineReader {
             } else if (accLen + n > acc.length) {
                 acc = Arrays.copyOf(acc, Math.max(acc.length * 2, accLen + n));
             }
-            System.arraycopy(buf, pos, acc, accLen, n);
+            System.arraycopy(m_buf, m_pos, acc, accLen, n);
             accLen += n;
-            pos = lim;
+            m_pos = m_lim;
         }
     }
 
+    /**
+     * Refills the buffer from the underlying stream, blocking until some input is available.
+     *
+     * @return false at end of stream
+     * @throws IOException if reading the underlying stream fails
+     */
     private boolean fill() throws IOException {
-        final int n = in.read(buf, 0, buf.length);
+        final int n = m_in.read(m_buf, 0, m_buf.length);
         if (n <= 0) {
             return false;
         }
-        pos = 0;
-        lim = n;
+        m_pos = 0;
+        m_lim = n;
         return true;
     }
 }

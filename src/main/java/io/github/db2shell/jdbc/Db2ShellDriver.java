@@ -33,6 +33,17 @@ public final class Db2ShellDriver implements Driver {
         }
     }
 
+    /**
+     * Opens a connection, starting a new db2 utility process.
+     *
+     * @param _url
+     *            the JDBC URL
+     * @param _info
+     *            connection properties; properties in the URL take precedence
+     * @return the new connection, or null if the URL is not a db2shell URL (as the JDBC contract requires)
+     * @throws SQLException
+     *             if the configuration is invalid or the db2 utility cannot be started
+     */
     @Override
     public Connection connect(final String _url, final Properties _info) throws SQLException {
         if (!acceptsURL(_url)) {

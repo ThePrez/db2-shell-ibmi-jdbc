@@ -40,32 +40,60 @@ import io.github.db2shell.jdbc.internal.Values;
  */
 public class Db2ShellCallableStatement extends Db2ShellPreparedStatement implements CallableStatement {
 
-    private static final Pattern RETURN_CALL = Pattern.compile("(?is)^\\s*\\{\\s*\\?\\s*=\\s*call\\s+(.+?)\\s*\\}\\s*;?\\s*$");
+    private static final Pattern s_returnCall = Pattern.compile("(?is)^\\s*\\{\\s*\\?\\s*=\\s*call\\s+(.+?)\\s*\\}\\s*;?\\s*$");
     private static final int NOT_OUT = Integer.MIN_VALUE;
 
-    private final boolean returnValue;
-    private final int[] outTypes;
-    private final int[] outScales;
-    private Object[] outValues;
-    private boolean lastWasNull = false;
+    private final boolean m_returnValue;
+    private final int[] m_outTypes;
+    private final int[] m_outScales;
+    private Object[] m_outValues;
+    private boolean m_lastWasNull = false;
 
+    /**
+     * Creates a callable statement. For the {@code {? = call f(...)}} form, parameter 1 is the function's return
+     * value and is pre-registered as a VARCHAR output parameter.
+     *
+     * @param _conn
+     *            the connection that owns this statement
+     * @param _sql
+     *            the CALL statement text, or {@code {? = call f(...)}}
+     * @param _type
+     *            the result set type ({@code ResultSet.TYPE_*})
+     * @param _concurrency
+     *            the result set concurrency ({@code ResultSet.CONCUR_*})
+     * @param _holdability
+     *            the result set holdability ({@code ResultSet.*_CURSORS_*})
+     * @throws SQLException
+     *             if the SQL text cannot be parsed
+     */
     Db2ShellCallableStatement(final Db2ShellConnection _conn, final String _sql, final int _type,
             final int _concurrency, final int _holdability) throws SQLException {
         super(_conn, parseCall(_conn, _sql), _type, _concurrency, _holdability);
-        returnValue = RETURN_CALL.matcher(_sql).matches();
-        outTypes = new int[parsed.getParameterCount()];
-        outScales = new int[parsed.getParameterCount()];
-        Arrays.fill(outTypes, NOT_OUT);
-        Arrays.fill(outScales, -1);
-        if (returnValue) {
+        m_returnValue = s_returnCall.matcher(_sql).matches();
+        m_outTypes = new int[m_parsed.getParameterCount()];
+        m_outScales = new int[m_parsed.getParameterCount()];
+        Arrays.fill(m_outTypes, NOT_OUT);
+        Arrays.fill(m_outScales, -1);
+        if (m_returnValue) {
             // the return value is always an output parameter; default its type until registered
-            outTypes[0] = Types.VARCHAR;
-            literals[0] = "";
+            m_outTypes[0] = Types.VARCHAR;
+            m_literals[0] = "";
         }
     }
 
+    /**
+     * Parses the call text, rewriting the {@code {? = call f(...)}} form to {@code SET ? = f(...)}.
+     *
+     * @param _conn
+     *            the connection, whose charset is used for parsing
+     * @param _sql
+     *            the statement text
+     * @return the parsed statement
+     * @throws SQLException
+     *             if the SQL text cannot be parsed
+     */
     private static SqlText parseCall(final Db2ShellConnection _conn, final String _sql) throws SQLException {
-        final Matcher m = RETURN_CALL.matcher(_sql);
+        final Matcher m = s_returnCall.matcher(_sql);
         if (m.matches()) {
             // {? = call f(...)} becomes SET ? = f(...) inside the compound statement
             return SqlText.parse("SET ? = " + m.group(1), _conn.engine().getCharset(), true);
@@ -80,13 +108,25 @@ public class Db2ShellCallableStatement extends Db2ShellPreparedStatement impleme
         registerOutParameter(_i, _sqlType, -1);
     }
 
+    /**
+     * Registers a parameter as OUT (or INOUT, if an input value is also set).
+     *
+     * @param _i
+     *            the 1-based parameter index
+     * @param _sqlType
+     *            the {@link Types} constant of the output value
+     * @param _scale
+     *            the number of decimal digits for DECIMAL/NUMERIC, or -1 for the default
+     * @throws SQLException
+     *             if the index is invalid or the statement is closed
+     */
     @Override
     public void registerOutParameter(final int _i, final int _sqlType, final int _scale) throws SQLException {
         final int i = index(_i);
-        outTypes[i] = _sqlType;
-        outScales[i] = _scale;
-        if (null == literals[i]) {
-            literals[i] = ""; // OUT-only: no input value required
+        m_outTypes[i] = _sqlType;
+        m_outScales[i] = _scale;
+        if (null == m_literals[i]) {
+            m_literals[i] = ""; // OUT-only: no input value required
         }
     }
 
@@ -95,19 +135,31 @@ public class Db2ShellCallableStatement extends Db2ShellPreparedStatement impleme
         registerOutParameter(_i, _sqlType, -1);
     }
 
+    /**
+     * Clears all input values. Output registrations are kept, so registered OUT parameters remain usable without
+     * an input value.
+     *
+     * @throws SQLException
+     *             if the statement is closed
+     */
     @Override
     public void clearParameters() throws SQLException {
         super.clearParameters();
-        for (int i = 0; i < outTypes.length; i++) {
-            if (outTypes[i] != NOT_OUT) {
-                literals[i] = "";
+        for (int i = 0; i < m_outTypes.length; i++) {
+            if (NOT_OUT != m_outTypes[i]) {
+                m_literals[i] = "";
             }
         }
     }
 
+    /**
+     * Tells whether any parameter is registered for output.
+     *
+     * @return true if at least one parameter is OUT or INOUT
+     */
     private boolean hasOutputs() {
-        for (final int t : outTypes) {
-            if (t != NOT_OUT) {
+        for (final int t : m_outTypes) {
+            if (NOT_OUT != t) {
                 return true;
             }
         }
@@ -116,6 +168,14 @@ public class Db2ShellCallableStatement extends Db2ShellPreparedStatement impleme
 
     // =================================================================================== execution
 
+    /**
+     * Executes the call. Without output parameters this is a plain execution; otherwise the output values are
+     * captured and made available to the getters.
+     *
+     * @return true if a plain execution produced a result set; always false when there are output parameters
+     * @throws SQLException
+     *             if a parameter is unset, the statement is closed, or execution fails
+     */
     @Override
     public boolean execute() throws SQLException {
         if (!hasOutputs()) {
@@ -137,14 +197,21 @@ public class Db2ShellCallableStatement extends Db2ShellPreparedStatement impleme
         return 0;
     }
 
+    /**
+     * Runs the call inside a compound statement that declares a variable per output parameter, then copies the
+     * variables into the SESSION.JDBC_OUT temporary table and reads them back into the output values.
+     *
+     * @throws SQLException
+     *             if an IN parameter is unset, the statement is closed, or the database reports an error
+     */
     private void runWithOutputs() throws SQLException {
         checkOpen();
-        outValues = null;
+        m_outValues = null;
         final Engine engine = engine();
-        final int n = outTypes.length;
+        final int n = m_outTypes.length;
         int varlen = 0;
-        for (final int t : outTypes) {
-            if (t != NOT_OUT && isVarLength(t)) {
+        for (final int t : m_outTypes) {
+            if (NOT_OUT != t && isVarLength(t)) {
                 varlen++;
             }
         }
@@ -157,46 +224,53 @@ public class Db2ShellCallableStatement extends Db2ShellPreparedStatement impleme
         final String[] args = new String[n];
         boolean first = true;
         for (int i = 0; i < n; i++) {
-            if (outTypes[i] == NOT_OUT) {
-                if (null == literals[i]) {
+            if (NOT_OUT == m_outTypes[i]) {
+                if (null == m_literals[i]) {
                     throw new SQLException("Parameter " + (i + 1) + " has not been set", "07001");
                 }
-                args[i] = literals[i];
+                args[i] = m_literals[i];
                 continue;
             }
             final String var = "JDBC_P" + (i + 1);
-            final String type = declaredType(outTypes[i], outScales[i], strLen, bools);
+            final String type = declaredType(m_outTypes[i], m_outScales[i], strLen, bools);
             table.append(first ? "" : ", ").append("P").append(i + 1).append(' ').append(type);
             insertCols.append(first ? "" : ", ").append(var);
             declares.append("DECLARE ").append(var).append(' ').append(type).append("; ");
-            if (null != literals[i] && !literals[i].isEmpty()) {
-                inits.append("SET ").append(var).append(" = ").append(literals[i]).append("; ");
+            if (null != m_literals[i] && !m_literals[i].isEmpty()) {
+                inits.append("SET ").append(var).append(" = ").append(m_literals[i]).append("; ");
             }
             args[i] = var;
             first = false;
         }
         table.append(") ON COMMIT PRESERVE ROWS NOT LOGGED ON ROLLBACK PRESERVE ROWS WITH REPLACE");
-        final String call = parsed.bind(args);
+        final String call = m_parsed.bind(args);
         final String compound = declares.toString() + inits + call + "; INSERT INTO SESSION.JDBC_OUT VALUES ("
                 + insertCols + "); END";
         engine.execInternal(table.toString(), getQueryTimeout());
         engine.execInternal(compound, getQueryTimeout());
         final Engine.QueryResult qr = engine.query("SELECT * FROM SESSION.JDBC_OUT", 0, getQueryTimeout());
-        final Object[] row = qr.rows.next();
-        qr.rows.close();
-        outValues = new Object[n];
+        final Object[] row = qr.getRows().next();
+        qr.getRows().close();
+        m_outValues = new Object[n];
         if (null != row) {
             int c = 0;
             for (int i = 0; i < n; i++) {
-                if (outTypes[i] != NOT_OUT) {
-                    outValues[i] = row[c++];
+                if (NOT_OUT != m_outTypes[i]) {
+                    m_outValues[i] = row[c++];
                 }
             }
         }
-        addWarnings(qr.warnings);
-        connection.collectWarnings();
+        addWarnings(qr.getWarnings());
+        m_connection.collectWarnings();
     }
 
+    /**
+     * Tells whether a type is declared with the shared variable-length budget in {@link #runWithOutputs()}.
+     *
+     * @param _t
+     *            a {@link Types} constant
+     * @return true for character, binary and object types
+     */
     private static boolean isVarLength(final int _t) {
         switch (_t) {
         case Types.CHAR:
@@ -216,8 +290,21 @@ public class Db2ShellCallableStatement extends Db2ShellPreparedStatement impleme
         }
     }
 
+    /**
+     * Maps a registered output type to the SQL type used to declare its variable and temporary table column.
+     *
+     * @param _t
+     *            the registered {@link Types} constant
+     * @param _scale
+     *            the registered scale, or -1 for the default
+     * @param _strLen
+     *            the length to use for variable-length character and binary types
+     * @param _bools
+     *            true if the server supports the BOOLEAN type
+     * @return the SQL type declaration
+     */
     private String declaredType(final int _t, final int _scale, final int _strLen, final boolean _bools) {
-        final int lob = connection.config().getLobMaxLength();
+        final int lob = m_connection.config().getLobMaxLength();
         switch (_t) {
         case Types.TINYINT:
         case Types.SMALLINT:
@@ -264,17 +351,25 @@ public class Db2ShellCallableStatement extends Db2ShellPreparedStatement impleme
         }
     }
 
+    /**
+     * Describes the parameters, reporting each as IN, OUT or INOUT according to its registration and whether an
+     * input value is set.
+     *
+     * @return the parameter metadata
+     * @throws SQLException
+     *             if the statement is closed
+     */
     @Override
     public ParameterMetaData getParameterMetaData() throws SQLException {
         checkOpen();
-        final int[] modes = new int[literals.length];
-        final int[] types = paramTypes.clone();
+        final int[] modes = new int[m_literals.length];
+        final int[] types = m_paramTypes.clone();
         for (int i = 0; i < modes.length; i++) {
-            if (outTypes[i] == NOT_OUT) {
+            if (NOT_OUT == m_outTypes[i]) {
                 modes[i] = ParameterMetaData.parameterModeIn;
             } else {
-                types[i] = outTypes[i];
-                final boolean in = null != literals[i] && !literals[i].isEmpty();
+                types[i] = m_outTypes[i];
+                final boolean in = null != m_literals[i] && !m_literals[i].isEmpty();
                 modes[i] = in ? ParameterMetaData.parameterModeInOut : ParameterMetaData.parameterModeOut;
             }
         }
@@ -283,26 +378,36 @@ public class Db2ShellCallableStatement extends Db2ShellPreparedStatement impleme
 
     // =================================================================================== getters
 
+    /**
+     * Returns an output value from the last execution and records whether it was NULL for {@link #wasNull()}.
+     *
+     * @param _i
+     *            the 1-based parameter index
+     * @return the raw output value, or null for SQL NULL
+     * @throws SQLException
+     *             if the index is invalid, the parameter is not registered for output, the statement has not been
+     *             executed, or the statement is closed
+     */
     private Object out(final int _i) throws SQLException {
         checkOpen();
-        if (_i < 1 || _i > outTypes.length) {
-            throw new SQLException("Parameter index " + _i + " out of range (1.." + outTypes.length + ")", "07009");
+        if (_i < 1 || _i > m_outTypes.length) {
+            throw new SQLException("Parameter index " + _i + " out of range (1.." + m_outTypes.length + ")", "07009");
         }
-        if (outTypes[_i - 1] == NOT_OUT) {
+        if (NOT_OUT == m_outTypes[_i - 1]) {
             throw new SQLException("Parameter " + _i + " was not registered as an output parameter", "07009");
         }
-        if (null == outValues) {
+        if (null == m_outValues) {
             throw new SQLException("The statement has not been executed", "HY010");
         }
-        final Object v = outValues[_i - 1];
-        lastWasNull = null == v;
+        final Object v = m_outValues[_i - 1];
+        m_lastWasNull = null == v;
         return v;
     }
 
     @Override
     public boolean wasNull() throws SQLException {
         checkOpen();
-        return lastWasNull;
+        return m_lastWasNull;
     }
 
     @Override
@@ -392,13 +497,22 @@ public class Db2ShellCallableStatement extends Db2ShellPreparedStatement impleme
         return Values.toTimestamp(out(_i), _cal);
     }
 
+    /**
+     * Returns an output value as an object; LOB and XML output types are wrapped in their JDBC interfaces.
+     *
+     * @param _i
+     *            the 1-based parameter index
+     * @return the value, or null for SQL NULL
+     * @throws SQLException
+     *             if the parameter is not a readable output parameter
+     */
     @Override
     public Object getObject(final int _i) throws SQLException {
         final Object v = out(_i);
         if (null == v) {
             return null;
         }
-        switch (outTypes[_i - 1]) {
+        switch (m_outTypes[_i - 1]) {
         case Types.CLOB:
         case Types.NCLOB:
             return new Lobs.ClobImpl(Values.toString(v));
@@ -455,6 +569,15 @@ public class Db2ShellCallableStatement extends Db2ShellPreparedStatement impleme
         throw SqlErrors.unsupported("getArray");
     }
 
+    /**
+     * Returns an output value parsed as a URL.
+     *
+     * @param _i
+     *            the 1-based parameter index
+     * @return the URL, or null for SQL NULL
+     * @throws SQLException
+     *             if the parameter is not a readable output parameter, or the value is not a valid URL
+     */
     @Override
     public URL getURL(final int _i) throws SQLException {
         final String s = Values.toString(out(_i));
@@ -495,82 +618,393 @@ public class Db2ShellCallableStatement extends Db2ShellPreparedStatement impleme
         return SqlErrors.unsupported("Named parameters");
     }
 
-    @Override public void registerOutParameter(String _n, int _t) throws SQLException { throw named(); }
-    @Override public void registerOutParameter(String _n, int _t, int _s) throws SQLException { throw named(); }
-    @Override public void registerOutParameter(String _n, int _t, String _tn) throws SQLException { throw named(); }
-    @Override public URL getURL(String _n) throws SQLException { throw named(); }
-    @Override public void setURL(String _n, URL _x) throws SQLException { throw named(); }
-    @Override public void setNull(String _n, int _t) throws SQLException { throw named(); }
-    @Override public void setBoolean(String _n, boolean _x) throws SQLException { throw named(); }
-    @Override public void setByte(String _n, byte _x) throws SQLException { throw named(); }
-    @Override public void setShort(String _n, short _x) throws SQLException { throw named(); }
-    @Override public void setInt(String _n, int _x) throws SQLException { throw named(); }
-    @Override public void setLong(String _n, long _x) throws SQLException { throw named(); }
-    @Override public void setFloat(String _n, float _x) throws SQLException { throw named(); }
-    @Override public void setDouble(String _n, double _x) throws SQLException { throw named(); }
-    @Override public void setBigDecimal(String _n, BigDecimal _x) throws SQLException { throw named(); }
-    @Override public void setString(String _n, String _x) throws SQLException { throw named(); }
-    @Override public void setBytes(String _n, byte[] _x) throws SQLException { throw named(); }
-    @Override public void setDate(String _n, Date _x) throws SQLException { throw named(); }
-    @Override public void setTime(String _n, Time _x) throws SQLException { throw named(); }
-    @Override public void setTimestamp(String _n, Timestamp _x) throws SQLException { throw named(); }
-    @Override public void setAsciiStream(String _n, InputStream _x, int _l) throws SQLException { throw named(); }
-    @Override public void setBinaryStream(String _n, InputStream _x, int _l) throws SQLException { throw named(); }
-    @Override public void setObject(String _n, Object _x, int _t, int _s) throws SQLException { throw named(); }
-    @Override public void setObject(String _n, Object _x, int _t) throws SQLException { throw named(); }
-    @Override public void setObject(String _n, Object _x) throws SQLException { throw named(); }
-    @Override public void setCharacterStream(String _n, Reader _x, int _l) throws SQLException { throw named(); }
-    @Override public void setDate(String _n, Date _x, Calendar _c) throws SQLException { throw named(); }
-    @Override public void setTime(String _n, Time _x, Calendar _c) throws SQLException { throw named(); }
-    @Override public void setTimestamp(String _n, Timestamp _x, Calendar _c) throws SQLException { throw named(); }
-    @Override public void setNull(String _n, int _t, String _tn) throws SQLException { throw named(); }
-    @Override public String getString(String _n) throws SQLException { throw named(); }
-    @Override public boolean getBoolean(String _n) throws SQLException { throw named(); }
-    @Override public byte getByte(String _n) throws SQLException { throw named(); }
-    @Override public short getShort(String _n) throws SQLException { throw named(); }
-    @Override public int getInt(String _n) throws SQLException { throw named(); }
-    @Override public long getLong(String _n) throws SQLException { throw named(); }
-    @Override public float getFloat(String _n) throws SQLException { throw named(); }
-    @Override public double getDouble(String _n) throws SQLException { throw named(); }
-    @Override public byte[] getBytes(String _n) throws SQLException { throw named(); }
-    @Override public Date getDate(String _n) throws SQLException { throw named(); }
-    @Override public Time getTime(String _n) throws SQLException { throw named(); }
-    @Override public Timestamp getTimestamp(String _n) throws SQLException { throw named(); }
-    @Override public Object getObject(String _n) throws SQLException { throw named(); }
-    @Override public BigDecimal getBigDecimal(String _n) throws SQLException { throw named(); }
-    @Override public Object getObject(String _n, Map<String, Class<?>> _m) throws SQLException { throw named(); }
-    @Override public Ref getRef(String _n) throws SQLException { throw named(); }
-    @Override public Blob getBlob(String _n) throws SQLException { throw named(); }
-    @Override public Clob getClob(String _n) throws SQLException { throw named(); }
-    @Override public Array getArray(String _n) throws SQLException { throw named(); }
-    @Override public Date getDate(String _n, Calendar _c) throws SQLException { throw named(); }
-    @Override public Time getTime(String _n, Calendar _c) throws SQLException { throw named(); }
-    @Override public Timestamp getTimestamp(String _n, Calendar _c) throws SQLException { throw named(); }
-    @Override public RowId getRowId(String _n) throws SQLException { throw named(); }
-    @Override public void setRowId(String _n, RowId _x) throws SQLException { throw named(); }
-    @Override public void setNString(String _n, String _x) throws SQLException { throw named(); }
-    @Override public void setNCharacterStream(String _n, Reader _x, long _l) throws SQLException { throw named(); }
-    @Override public void setNClob(String _n, NClob _x) throws SQLException { throw named(); }
-    @Override public void setClob(String _n, Reader _x, long _l) throws SQLException { throw named(); }
-    @Override public void setBlob(String _n, InputStream _x, long _l) throws SQLException { throw named(); }
-    @Override public void setNClob(String _n, Reader _x, long _l) throws SQLException { throw named(); }
-    @Override public NClob getNClob(String _n) throws SQLException { throw named(); }
-    @Override public void setSQLXML(String _n, SQLXML _x) throws SQLException { throw named(); }
-    @Override public SQLXML getSQLXML(String _n) throws SQLException { throw named(); }
-    @Override public String getNString(String _n) throws SQLException { throw named(); }
-    @Override public Reader getNCharacterStream(String _n) throws SQLException { throw named(); }
-    @Override public Reader getCharacterStream(String _n) throws SQLException { throw named(); }
-    @Override public void setBlob(String _n, Blob _x) throws SQLException { throw named(); }
-    @Override public void setClob(String _n, Clob _x) throws SQLException { throw named(); }
-    @Override public void setAsciiStream(String _n, InputStream _x, long _l) throws SQLException { throw named(); }
-    @Override public void setBinaryStream(String _n, InputStream _x, long _l) throws SQLException { throw named(); }
-    @Override public void setCharacterStream(String _n, Reader _x, long _l) throws SQLException { throw named(); }
-    @Override public void setAsciiStream(String _n, InputStream _x) throws SQLException { throw named(); }
-    @Override public void setBinaryStream(String _n, InputStream _x) throws SQLException { throw named(); }
-    @Override public void setCharacterStream(String _n, Reader _x) throws SQLException { throw named(); }
-    @Override public void setNCharacterStream(String _n, Reader _x) throws SQLException { throw named(); }
-    @Override public void setClob(String _n, Reader _x) throws SQLException { throw named(); }
-    @Override public void setBlob(String _n, InputStream _x) throws SQLException { throw named(); }
-    @Override public void setNClob(String _n, Reader _x) throws SQLException { throw named(); }
-    @Override public <T> T getObject(String _n, Class<T> _x) throws SQLException { throw named(); }
+    @Override
+    public void registerOutParameter(final String _n, final int _t) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void registerOutParameter(final String _n, final int _t, final int _s) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void registerOutParameter(final String _n, final int _t, final String _tn) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public URL getURL(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setURL(final String _n, final URL _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setNull(final String _n, final int _t) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setBoolean(final String _n, final boolean _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setByte(final String _n, final byte _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setShort(final String _n, final short _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setInt(final String _n, final int _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setLong(final String _n, final long _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setFloat(final String _n, final float _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setDouble(final String _n, final double _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setBigDecimal(final String _n, final BigDecimal _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setString(final String _n, final String _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setBytes(final String _n, final byte[] _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setDate(final String _n, final Date _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setTime(final String _n, final Time _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setTimestamp(final String _n, final Timestamp _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setAsciiStream(final String _n, final InputStream _x, final int _l) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setBinaryStream(final String _n, final InputStream _x, final int _l) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setObject(final String _n, final Object _x, final int _t, final int _s) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setObject(final String _n, final Object _x, final int _t) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setObject(final String _n, final Object _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setCharacterStream(final String _n, final Reader _x, final int _l) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setDate(final String _n, final Date _x, final Calendar _c) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setTime(final String _n, final Time _x, final Calendar _c) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setTimestamp(final String _n, final Timestamp _x, final Calendar _c) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setNull(final String _n, final int _t, final String _tn) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public String getString(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public boolean getBoolean(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public byte getByte(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public short getShort(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public int getInt(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public long getLong(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public float getFloat(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public double getDouble(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public byte[] getBytes(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public Date getDate(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public Time getTime(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public Timestamp getTimestamp(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public Object getObject(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public BigDecimal getBigDecimal(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public Object getObject(final String _n, final Map<String, Class<?>> _m) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public Ref getRef(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public Blob getBlob(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public Clob getClob(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public Array getArray(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public Date getDate(final String _n, final Calendar _c) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public Time getTime(final String _n, final Calendar _c) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public Timestamp getTimestamp(final String _n, final Calendar _c) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public RowId getRowId(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setRowId(final String _n, final RowId _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setNString(final String _n, final String _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setNCharacterStream(final String _n, final Reader _x, final long _l) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setNClob(final String _n, final NClob _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setClob(final String _n, final Reader _x, final long _l) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setBlob(final String _n, final InputStream _x, final long _l) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setNClob(final String _n, final Reader _x, final long _l) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public NClob getNClob(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setSQLXML(final String _n, final SQLXML _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public SQLXML getSQLXML(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public String getNString(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public Reader getNCharacterStream(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public Reader getCharacterStream(final String _n) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setBlob(final String _n, final Blob _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setClob(final String _n, final Clob _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setAsciiStream(final String _n, final InputStream _x, final long _l) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setBinaryStream(final String _n, final InputStream _x, final long _l) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setCharacterStream(final String _n, final Reader _x, final long _l) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setAsciiStream(final String _n, final InputStream _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setBinaryStream(final String _n, final InputStream _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setCharacterStream(final String _n, final Reader _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setNCharacterStream(final String _n, final Reader _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setClob(final String _n, final Reader _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setBlob(final String _n, final InputStream _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public void setNClob(final String _n, final Reader _x) throws SQLException {
+        throw named();
+    }
+
+    @Override
+    public <T> T getObject(final String _n, final Class<T> _x) throws SQLException {
+        throw named();
+    }
 }

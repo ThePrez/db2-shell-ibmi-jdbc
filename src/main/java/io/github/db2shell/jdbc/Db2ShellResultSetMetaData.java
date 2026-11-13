@@ -9,22 +9,22 @@ import io.github.db2shell.jdbc.internal.ColumnInfo;
 /** Column metadata from the query's SQL descriptor (typed mode) or display header (raw mode). */
 public class Db2ShellResultSetMetaData implements ResultSetMetaData {
 
-    private final List<ColumnInfo> columns;
+    private final List<ColumnInfo> m_columns;
 
     Db2ShellResultSetMetaData(final List<ColumnInfo> _columns) {
-        columns = _columns;
+        m_columns = _columns;
     }
 
     private ColumnInfo col(final int _i) throws SQLException {
-        if (_i < 1 || _i > columns.size()) {
-            throw new SQLException("Column index " + _i + " out of range (1.." + columns.size() + ")", "07009");
+        if (_i < 1 || _i > m_columns.size()) {
+            throw new SQLException("Column index " + _i + " out of range (1.." + m_columns.size() + ")", "07009");
         }
-        return columns.get(_i - 1);
+        return m_columns.get(_i - 1);
     }
 
     @Override
     public int getColumnCount() {
-        return columns.size();
+        return m_columns.size();
     }
 
     @Override
@@ -41,7 +41,7 @@ public class Db2ShellResultSetMetaData implements ResultSetMetaData {
     @Override
     public boolean isSearchable(final int _c) throws SQLException {
         final ColumnInfo.Kind k = col(_c).getKind();
-        return k != ColumnInfo.Kind.BLOB && k != ColumnInfo.Kind.CLOB && k != ColumnInfo.Kind.XML;
+        return ColumnInfo.Kind.BLOB != k && ColumnInfo.Kind.CLOB != k && ColumnInfo.Kind.XML != k;
     }
 
     @Override

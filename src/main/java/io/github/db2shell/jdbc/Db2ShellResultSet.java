@@ -42,35 +42,50 @@ import io.github.db2shell.jdbc.internal.Values;
  */
 public class Db2ShellResultSet extends ReadOnlyResultSet {
 
-    private final Db2ShellStatement statement;
-    private final List<ColumnInfo> columns;
-    private final Map<String, Integer> labelIndex = new HashMap<String, Integer>();
-    private final int type;
-    private final int holdability;
-    private RowSource source;
-    private List<Object[]> all; // scrollable only
-    private Object[] row;
-    private int rowNumber = 0; // 1-based; 0 = before first
-    private boolean afterLast = false;
-    private boolean closed = false;
-    private boolean wasNull = false;
-    private SQLWarning warnings;
-    private int fetchSize = 0;
-    private int fetchDirection = FETCH_FORWARD;
-    private boolean sourceWarningsTaken = false;
+    private final Db2ShellStatement m_statement;
+    private final List<ColumnInfo> m_columns;
+    private final Map<String, Integer> m_labelIndex = new HashMap<String, Integer>();
+    private final int m_type;
+    private final int m_holdability;
+    private RowSource m_source;
+    private List<Object[]> m_all; // scrollable only
+    private Object[] m_row;
+    private int m_rowNumber = 0; // 1-based; 0 = before first
+    private boolean m_afterLast = false;
+    private boolean m_closed = false;
+    private boolean m_wasNull = false;
+    private SQLWarning m_warnings;
+    private int m_fetchSize = 0;
+    private int m_fetchDirection = FETCH_FORWARD;
+    private boolean m_sourceWarningsTaken = false;
 
+    /**
+     * Creates a result set over a row source. Column labels are indexed both as given and upper-cased, so
+     * {@link #findColumn(String)} can match case-insensitively; the first column wins when labels repeat.
+     *
+     * @param _stmt
+     *            the statement that produced the result set, or null for an in-memory result set
+     * @param _cols
+     *            the column descriptions
+     * @param _src
+     *            the source of the rows; owned (and closed) by this result set
+     * @param _type
+     *            the {@code ResultSet.TYPE_*} value
+     * @param _holdability
+     *            the {@code ResultSet} holdability value
+     */
     Db2ShellResultSet(final Db2ShellStatement _stmt, final List<ColumnInfo> _cols, final RowSource _src,
             final int _type, final int _holdability) {
-        statement = _stmt;
-        columns = _cols;
-        source = _src;
-        type = _type;
-        holdability = _holdability;
+        m_statement = _stmt;
+        m_columns = _cols;
+        m_source = _src;
+        m_type = _type;
+        m_holdability = _holdability;
         for (int i = _cols.size() - 1; i >= 0; i--) {
-            labelIndex.put(_cols.get(i).getName().toUpperCase(Locale.ROOT), i + 1);
+            m_labelIndex.put(_cols.get(i).getName().toUpperCase(Locale.ROOT), i + 1);
         }
         for (int i = _cols.size() - 1; i >= 0; i--) {
-            labelIndex.put(_cols.get(i).getName(), i + 1);
+            m_labelIndex.put(_cols.get(i).getName(), i + 1);
         }
     }
 
@@ -82,64 +97,90 @@ public class Db2ShellResultSet extends ReadOnlyResultSet {
     }
 
     List<ColumnInfo> columns() {
-        return columns;
+        return m_columns;
     }
 
     // =================================================================================== state
 
     private void checkOpen() throws SQLException {
-        if (closed) {
+        if (m_closed) {
             throw SqlErrors.closed("ResultSet");
         }
     }
 
     private void checkScrollable() throws SQLException {
         checkOpen();
-        if (type == TYPE_FORWARD_ONLY) {
+        if (TYPE_FORWARD_ONLY == m_type) {
             throw new SQLException("Operation not allowed on a TYPE_FORWARD_ONLY result set", "24000");
         }
     }
 
+    /**
+     * Reads every remaining row from the source into memory, for scrollable access. Does nothing if the rows
+     * are already loaded.
+     *
+     * @throws SQLException
+     *             if reading from the db2 utility fails
+     */
     private void loadAll() throws SQLException {
-        if (null != all) {
+        if (null != m_all) {
             return;
         }
-        all = new ArrayList<Object[]>();
+        m_all = new ArrayList<Object[]>();
         Object[] r;
-        while (null != (r = source.next())) {
-            all.add(r);
+        while (null != (r = m_source.next())) {
+            m_all.add(r);
         }
         takeSourceWarnings();
     }
 
+    /**
+     * Moves the row source's warnings onto this result set's warning chain, once only.
+     */
     private void takeSourceWarnings() {
-        if (sourceWarningsTaken) {
+        if (m_sourceWarningsTaken) {
             return;
         }
-        sourceWarningsTaken = true;
-        for (final SQLWarning w : source.getWarnings()) {
+        m_sourceWarningsTaken = true;
+        for (final SQLWarning w : m_source.getWarnings()) {
             addWarning(w);
         }
     }
 
+    /**
+     * Appends a warning to this result set's warning chain.
+     *
+     * @param _w
+     *            the warning to add
+     */
     private void addWarning(final SQLWarning _w) {
-        if (null == warnings) {
-            warnings = _w;
+        if (null == m_warnings) {
+            m_warnings = _w;
         } else {
-            warnings.setNextWarning(_w);
+            m_warnings.setNextWarning(_w);
         }
     }
 
+    /**
+     * Returns the raw value of a column in the current row and records whether it was null, for
+     * {@link #wasNull()}.
+     *
+     * @param _col
+     *            the 1-based column index
+     * @return the column value, or null for SQL NULL
+     * @throws SQLException
+     *             if the result set is closed, there is no current row, or the index is out of range
+     */
     private Object value(final int _col) throws SQLException {
         checkOpen();
-        if (null == row) {
+        if (null == m_row) {
             throw new SQLException("No current row", "24000");
         }
-        if (_col < 1 || _col > columns.size()) {
-            throw new SQLException("Column index " + _col + " out of range (1.." + columns.size() + ")", "07009");
+        if (_col < 1 || _col > m_columns.size()) {
+            throw new SQLException("Column index " + _col + " out of range (1.." + m_columns.size() + ")", "07009");
         }
-        final Object v = row[_col - 1];
-        wasNull = null == v;
+        final Object v = m_row[_col - 1];
+        m_wasNull = null == v;
         return v;
     }
 
@@ -147,57 +188,99 @@ public class Db2ShellResultSet extends ReadOnlyResultSet {
         return value(findColumn(_label));
     }
 
+    /**
+     * Closes this result set on behalf of its statement (without notifying the statement back). A failure to
+     * close is traced and otherwise ignored.
+     */
     void closeQuietlyFromStatement() {
         try {
             closeInternal(false);
         } catch (final SQLException e) {
-            // ignore
+            trace("closeQuietlyFromStatement", e);
         }
     }
 
+    /**
+     * Writes a trace line through the owning statement's connection. In-memory result sets that have no
+     * statement are not traced.
+     *
+     * @param _what
+     *            a short label for the event
+     * @param _msg
+     *            the message or exception to trace
+     */
+    private void trace(final String _what, final Object _msg) {
+        if (null != m_statement) {
+            m_statement.engine().getTracer().trace(_what, _msg);
+        }
+    }
+
+    /**
+     * Closes the result set and its row source. Does nothing if already closed.
+     *
+     * @param _notify
+     *            true to tell the owning statement that this result set has closed
+     * @throws SQLException
+     *             if closing the row source fails
+     */
     private void closeInternal(final boolean _notify) throws SQLException {
-        if (closed) {
+        if (m_closed) {
             return;
         }
-        closed = true;
-        row = null;
-        all = null;
+        m_closed = true;
+        m_row = null;
+        m_all = null;
         try {
-            source.close();
+            m_source.close();
         } finally {
-            if (_notify && null != statement) {
-                statement.resultClosed(this);
+            if (_notify && null != m_statement) {
+                m_statement.resultClosed(this);
             }
         }
     }
 
+    /**
+     * Applies the statement's maximum field size to a character value.
+     *
+     * @param _s
+     *            the value, or null
+     * @return the value, cut to the maximum field size if one is set
+     */
     private String truncate(final String _s) {
-        if (null == _s || null == statement) {
+        if (null == _s || null == m_statement) {
             return _s;
         }
-        final int max = statement.maxFieldSize();
+        final int max = m_statement.maxFieldSize();
         return max > 0 && _s.length() > max ? _s.substring(0, max) : _s;
     }
 
     // =================================================================================== navigation
 
+    /**
+     * Moves to the next row. A forward-only result set reads the next row from the db2 utility; when the rows
+     * run out, the source's warnings are collected.
+     *
+     * @return true if there is a current row, false when past the last row
+     * @throws SQLException
+     *             if the result set is closed or reading from the db2 utility fails
+     */
     @Override
     public boolean next() throws SQLException {
         checkOpen();
-        if (type != TYPE_FORWARD_ONLY) {
+        if (TYPE_FORWARD_ONLY != m_type) {
             return relative(1);
         }
-        if (afterLast) {
+        if (m_afterLast) {
             return false;
         }
-        row = source.next();
-        if (null == row) {
-            afterLast = true;
-            rowNumber = 0;
+        m_row = m_source.next();
+        if (null == m_row) {
+            m_afterLast = true;
+            m_rowNumber = 0;
             takeSourceWarnings();
             return false;
         }
-        rowNumber++;
+        m_rowNumber++;
         return true;
     }
 
@@ -209,58 +292,86 @@ public class Db2ShellResultSet extends ReadOnlyResultSet {
     @Override
     public boolean wasNull() throws SQLException {
         checkOpen();
-        return wasNull;
+        return m_wasNull;
     }
 
+    /**
+     * Reports whether the cursor is before the first row. For a scrollable result set, an empty result is
+     * never before the first row, as the JDBC contract requires.
+     *
+     * @return true if the cursor is before the first row
+     * @throws SQLException
+     *             if the result set is closed or reading from the db2 utility fails
+     */
     @Override
     public boolean isBeforeFirst() throws SQLException {
         checkOpen();
-        if (type == TYPE_FORWARD_ONLY) {
-            return rowNumber == 0 && !afterLast;
+        if (TYPE_FORWARD_ONLY == m_type) {
+            return 0 == m_rowNumber && !m_afterLast;
         }
         loadAll();
-        return rowNumber == 0 && !afterLast && !all.isEmpty();
+        return 0 == m_rowNumber && !m_afterLast && !m_all.isEmpty();
     }
 
+    /**
+     * Reports whether the cursor is after the last row. For a scrollable result set, an empty result is never
+     * after the last row, as the JDBC contract requires.
+     *
+     * @return true if the cursor is after the last row
+     * @throws SQLException
+     *             if the result set is closed or reading from the db2 utility fails
+     */
     @Override
     public boolean isAfterLast() throws SQLException {
         checkOpen();
-        if (type == TYPE_FORWARD_ONLY) {
-            return afterLast;
+        if (TYPE_FORWARD_ONLY == m_type) {
+            return m_afterLast;
         }
         loadAll();
-        return afterLast && !all.isEmpty();
+        return m_afterLast && !m_all.isEmpty();
     }
 
     @Override
     public boolean isFirst() throws SQLException {
         checkOpen();
-        return rowNumber == 1;
+        return 1 == m_rowNumber;
     }
 
     @Override
     public boolean isLast() throws SQLException {
         checkScrollable();
         loadAll();
-        return rowNumber > 0 && rowNumber == all.size();
+        return m_rowNumber > 0 && m_rowNumber == m_all.size();
     }
 
+    /**
+     * Moves the cursor before the first row.
+     *
+     * @throws SQLException
+     *             if the result set is closed or forward-only, or reading from the db2 utility fails
+     */
     @Override
     public void beforeFirst() throws SQLException {
         checkScrollable();
         loadAll();
-        rowNumber = 0;
-        row = null;
-        afterLast = false;
+        m_rowNumber = 0;
+        m_row = null;
+        m_afterLast = false;
     }
 
+    /**
+     * Moves the cursor after the last row.
+     *
+     * @throws SQLException
+     *             if the result set is closed or forward-only, or reading from the db2 utility fails
+     */
     @Override
     public void afterLast() throws SQLException {
         checkScrollable();
         loadAll();
-        rowNumber = 0;
-        row = null;
-        afterLast = true;
+        m_rowNumber = 0;
+        m_row = null;
+        m_afterLast = true;
     }
 
     @Override
@@ -276,15 +387,24 @@ public class Db2ShellResultSet extends ReadOnlyResultSet {
     @Override
     public int getRow() throws SQLException {
         checkOpen();
-        return afterLast ? 0 : rowNumber;
+        return m_afterLast ? 0 : m_rowNumber;
     }
 
+    /**
+     * Moves to the given row of a scrollable result set.
+     *
+     * @param _row
+     *            the 1-based row number; negative values count back from the end ({@code -1} is the last row)
+     * @return true if the cursor is on a row, false if it ended up before the first or after the last row
+     * @throws SQLException
+     *             if the result set is closed or forward-only, or reading from the db2 utility fails
+     */
     @Override
     public boolean absolute(final int _row) throws SQLException {
         checkScrollable();
         loadAll();
-        final int n = all.size();
-        int target = _row >= 0 ? _row : n + 1 + _row;
+        final int n = m_all.size();
+        final int target = _row >= 0 ? _row : n + 1 + _row;
         if (target <= 0) {
             beforeFirst();
             return false;
@@ -293,20 +413,31 @@ public class Db2ShellResultSet extends ReadOnlyResultSet {
             afterLast();
             return false;
         }
-        rowNumber = target;
-        afterLast = false;
-        row = all.get(target - 1);
+        m_rowNumber = target;
+        m_afterLast = false;
+        m_row = m_all.get(target - 1);
         return true;
     }
 
+    /**
+     * Moves the cursor a number of rows relative to the current position. On a forward-only result set only
+     * forward moves are allowed, and they are performed by calling {@link #next()} repeatedly.
+     *
+     * @param _rows
+     *            the number of rows to move; negative moves backwards (scrollable result sets only)
+     * @return true if the cursor is on a row afterwards
+     * @throws SQLException
+     *             if the result set is closed, a backward move is requested on a forward-only result set, or
+     *             reading from the db2 utility fails
+     */
     @Override
     public boolean relative(final int _rows) throws SQLException {
         checkOpen();
-        if (type == TYPE_FORWARD_ONLY) {
+        if (TYPE_FORWARD_ONLY == m_type) {
             if (_rows < 0) {
                 checkScrollable();
             }
-            boolean ok = null != row;
+            boolean ok = null != m_row;
             for (int i = 0; i < _rows; i++) {
                 ok = next();
                 if (!ok) {
@@ -316,13 +447,13 @@ public class Db2ShellResultSet extends ReadOnlyResultSet {
             return ok;
         }
         loadAll();
-        final int current = afterLast ? all.size() + 1 : rowNumber;
+        final int current = m_afterLast ? m_all.size() + 1 : m_rowNumber;
         final int target = current + _rows;
         if (target <= 0) {
             beforeFirst();
             return false;
         }
-        if (target > all.size()) {
+        if (target > m_all.size()) {
             afterLast();
             return false;
         }
@@ -335,37 +466,46 @@ public class Db2ShellResultSet extends ReadOnlyResultSet {
         return relative(-1);
     }
 
+    /**
+     * Records the fetch direction hint.
+     *
+     * @param _direction
+     *            the {@code ResultSet.FETCH_*} value
+     * @throws SQLException
+     *             if the result set is closed, or a direction other than FETCH_FORWARD is requested on a
+     *             forward-only result set
+     */
     @Override
     public void setFetchDirection(final int _direction) throws SQLException {
         checkOpen();
-        if (_direction != FETCH_FORWARD && type == TYPE_FORWARD_ONLY) {
+        if (FETCH_FORWARD != _direction && TYPE_FORWARD_ONLY == m_type) {
             throw new SQLException("Only FETCH_FORWARD is allowed on a forward-only result set", "HY106");
         }
-        fetchDirection = _direction;
+        m_fetchDirection = _direction;
     }
 
     @Override
     public int getFetchDirection() throws SQLException {
         checkOpen();
-        return fetchDirection;
+        return m_fetchDirection;
     }
 
     @Override
     public void setFetchSize(final int _rows) throws SQLException {
         checkOpen();
-        fetchSize = _rows;
+        m_fetchSize = _rows;
     }
 
     @Override
     public int getFetchSize() throws SQLException {
         checkOpen();
-        return fetchSize;
+        return m_fetchSize;
     }
 
     @Override
     public int getType() throws SQLException {
         checkOpen();
-        return type;
+        return m_type;
     }
 
     @Override
@@ -377,30 +517,30 @@ public class Db2ShellResultSet extends ReadOnlyResultSet {
     @Override
     public int getHoldability() throws SQLException {
         checkOpen();
-        return holdability;
+        return m_holdability;
     }
 
     @Override
     public boolean isClosed() {
-        return closed;
+        return m_closed;
     }
 
     @Override
     public Statement getStatement() throws SQLException {
         checkOpen();
-        return statement;
+        return m_statement;
     }
 
     @Override
     public SQLWarning getWarnings() throws SQLException {
         checkOpen();
-        return warnings;
+        return m_warnings;
     }
 
     @Override
     public void clearWarnings() throws SQLException {
         checkOpen();
-        warnings = null;
+        m_warnings = null;
     }
 
     @Override
@@ -411,18 +551,28 @@ public class Db2ShellResultSet extends ReadOnlyResultSet {
     @Override
     public ResultSetMetaData getMetaData() throws SQLException {
         checkOpen();
-        return new Db2ShellResultSetMetaData(columns);
+        return new Db2ShellResultSetMetaData(m_columns);
     }
 
+    /**
+     * Finds a column by label: first an exact match, then case-insensitively, then with surrounding double
+     * quotes removed. When labels repeat, the first matching column is returned.
+     *
+     * @param _label
+     *            the column label
+     * @return the 1-based column index
+     * @throws SQLException
+     *             if the result set is closed or no column has that label
+     */
     @Override
     public int findColumn(final String _label) throws SQLException {
         checkOpen();
-        Integer i = labelIndex.get(_label);
+        Integer i = m_labelIndex.get(_label);
         if (null == i) {
-            i = labelIndex.get(_label.toUpperCase(Locale.ROOT));
+            i = m_labelIndex.get(_label.toUpperCase(Locale.ROOT));
         }
         if (null == i && _label.startsWith("\"") && _label.endsWith("\"") && _label.length() > 1) {
-            i = labelIndex.get(_label.substring(1, _label.length() - 1));
+            i = m_labelIndex.get(_label.substring(1, _label.length() - 1));
         }
         if (null == i) {
             throw new SQLException("Column '" + _label + "' not found", "42703");
@@ -532,6 +682,16 @@ public class Db2ShellResultSet extends ReadOnlyResultSet {
         return null == s ? null : new ByteArrayInputStream(s.getBytes(StandardCharsets.UTF_16BE));
     }
 
+    /**
+     * Returns a column as a binary stream: the bytes of a binary value, otherwise the UTF-8 encoding of its
+     * string form.
+     *
+     * @param _col
+     *            the 1-based column index
+     * @return the stream, or null for SQL NULL
+     * @throws SQLException
+     *             if the result set is closed, there is no current row, or the index is out of range
+     */
     @Override
     public InputStream getBinaryStream(final int _col) throws SQLException {
         final Object v = value(_col);
@@ -547,13 +707,23 @@ public class Db2ShellResultSet extends ReadOnlyResultSet {
         return null == s ? null : new StringReader(s);
     }
 
+    /**
+     * Returns a column as its default Java object. LOB and XML values are wrapped in {@link Clob},
+     * {@link Blob} and {@link SQLXML} objects; strings are cut to the statement's maximum field size.
+     *
+     * @param _col
+     *            the 1-based column index
+     * @return the value, or null for SQL NULL
+     * @throws SQLException
+     *             if the result set is closed, there is no current row, or the index is out of range
+     */
     @Override
     public Object getObject(final int _col) throws SQLException {
         final Object v = value(_col);
         if (null == v) {
             return null;
         }
-        switch (columns.get(_col - 1).getKind()) {
+        switch (m_columns.get(_col - 1).getKind()) {
         case CLOB:
             return new Lobs.ClobImpl((String) v);
         case BLOB:
@@ -602,6 +772,16 @@ public class Db2ShellResultSet extends ReadOnlyResultSet {
         throw SqlErrors.unsupported("getArray");
     }
 
+    /**
+     * Returns a column parsed as a {@link URL}.
+     *
+     * @param _col
+     *            the 1-based column index
+     * @return the URL, or null for SQL NULL
+     * @throws SQLException
+     *             if the result set is closed, there is no current row, the index is out of range, or the value
+     *             is not a valid URL
+     */
     @Override
     public URL getURL(final int _col) throws SQLException {
         final String s = Values.toString(value(_col));
@@ -615,6 +795,15 @@ public class Db2ShellResultSet extends ReadOnlyResultSet {
         }
     }
 
+    /**
+     * Returns a column as a {@link RowId} wrapping a copy of its bytes.
+     *
+     * @param _col
+     *            the 1-based column index
+     * @return the row id, or null for SQL NULL
+     * @throws SQLException
+     *             if the result set is closed, there is no current row, or the index is out of range
+     */
     @Override
     public RowId getRowId(final int _col) throws SQLException {
         final Object v = value(_col);

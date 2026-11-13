@@ -28,16 +28,27 @@ import java.util.regex.Pattern;
 /** Conversions between the driver's internal value representation and the types JDBC callers ask for. */
 public final class Values {
 
-    private static final Pattern TS = Pattern.compile(
+    private static final Pattern s_timestampPattern = Pattern.compile(
             "^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[- T](\\d{1,2})[.:](\\d{1,2})(?:[.:](\\d{1,2})(?:[.,](\\d{1,12}))?)?)?\\s*$");
-    private static final Pattern TIME = Pattern.compile("^(\\d{1,2})[.:](\\d{1,2})(?:[.:](\\d{1,2}))?(?:[.,]\\d*)?\\s*$");
+    private static final Pattern s_timePattern = Pattern.compile("^(\\d{1,2})[.:](\\d{1,2})(?:[.:](\\d{1,2}))?(?:[.,]\\d*)?\\s*$");
 
     private Values() {
     }
 
     // =================================================================================== decoding from wire text
 
-    /** Converts the text form of a typed-mode token into the internal Java value for the column kind. */
+    /**
+     * Converts the text form of a typed-mode token into the internal Java value for the column kind.
+     *
+     * @param _kind
+     *            the column kind
+     * @param _text
+     *            the token text
+     * @return the value: String for character data, byte[] for binary data, Integer/Long/BigDecimal/Float/Double
+     *         for numbers (Double for DECFLOAT special values), java.sql date/time types, or Boolean
+     * @throws SQLException
+     *             if the text is not valid for the kind
+     */
     public static Object decode(final ColumnInfo.Kind _kind, final String _text) throws SQLException {
         try {
             switch (_kind) {
@@ -84,15 +95,23 @@ public final class Values {
         }
     }
 
+    /**
+     * Normalizes the text of a floating point value for {@link Double#parseDouble(String)}: decimal comma to
+     * point, and the server's spellings of NaN and infinity to Java's.
+     *
+     * @param _s
+     *            the text
+     * @return the normalized text
+     */
     private static String floatText(final String _s) {
         final String t = _s.trim().replace(',', '.').toUpperCase(Locale.ROOT);
         if (t.endsWith("NAN")) {
             return "NaN";
         }
-        if (t.equals("INFINITY") || t.equals("+INFINITY") || t.equals("INF")) {
+        if ("INFINITY".equals(t) || "+INFINITY".equals(t) || "INF".equals(t)) {
             return "Infinity";
         }
-        if (t.equals("-INFINITY") || t.equals("-INF")) {
+        if ("-INFINITY".equals(t) || "-INF".equals(t)) {
             return "-Infinity";
         }
         return t;
@@ -100,6 +119,13 @@ public final class Values {
 
     // =================================================================================== getters
 
+    /**
+     * Converts a value to its string form: binary values as hex, decimals without exponent.
+     *
+     * @param _v
+     *            the value (may be null)
+     * @return the string form, or null for null
+     */
     public static String toString(final Object _v) {
         if (null == _v) {
             return null;
@@ -119,6 +145,16 @@ public final class Values {
         return _v.toString();
     }
 
+    /**
+     * Converts a value to a boolean. Numbers are true when non-zero; strings accept true/false, y/n, yes/no, t/f,
+     * on/off, 1/0 (case-insensitive) or any number.
+     *
+     * @param _v
+     *            the value (may be null)
+     * @return the boolean value, false for null
+     * @throws SQLException
+     *             if the value cannot be interpreted as a boolean
+     */
     public static boolean toBoolean(final Object _v) throws SQLException {
         if (null == _v) {
             return false;
@@ -127,24 +163,33 @@ public final class Values {
             return (Boolean) _v;
         }
         if (_v instanceof Number) {
-            return ((Number) _v).doubleValue() != 0;
+            return 0 != ((Number) _v).doubleValue();
         }
         final String s = toString(_v).trim();
-        if (s.equalsIgnoreCase("true") || s.equalsIgnoreCase("y") || s.equalsIgnoreCase("yes") || s.equals("1")
-                || s.equalsIgnoreCase("t") || s.equalsIgnoreCase("on")) {
+        if ("true".equalsIgnoreCase(s) || "y".equalsIgnoreCase(s) || "yes".equalsIgnoreCase(s) || "1".equals(s)
+                || "t".equalsIgnoreCase(s) || "on".equalsIgnoreCase(s)) {
             return true;
         }
-        if (s.equalsIgnoreCase("false") || s.equalsIgnoreCase("n") || s.equalsIgnoreCase("no") || s.equals("0")
-                || s.equalsIgnoreCase("f") || s.equalsIgnoreCase("off") || s.isEmpty()) {
+        if ("false".equalsIgnoreCase(s) || "n".equalsIgnoreCase(s) || "no".equalsIgnoreCase(s) || "0".equals(s)
+                || "f".equalsIgnoreCase(s) || "off".equalsIgnoreCase(s) || s.isEmpty()) {
             return false;
         }
         try {
-            return new BigDecimal(s).signum() != 0;
+            return 0 != new BigDecimal(s).signum();
         } catch (final NumberFormatException e) {
             throw conversion(_v, "boolean");
         }
     }
 
+    /**
+     * Converts a value to a BigDecimal.
+     *
+     * @param _v
+     *            the value (may be null)
+     * @return the value, or null for null
+     * @throws SQLException
+     *             if the value is NaN, infinite, or not a number
+     */
     public static BigDecimal toBigDecimal(final Object _v) throws SQLException {
         if (null == _v) {
             return null;
@@ -175,6 +220,15 @@ public final class Values {
         }
     }
 
+    /**
+     * Converts a value to a double.
+     *
+     * @param _v
+     *            the value (may be null)
+     * @return the value, 0 for null
+     * @throws SQLException
+     *             if the value is not a number
+     */
     public static double toDouble(final Object _v) throws SQLException {
         if (null == _v) {
             return 0;
@@ -192,6 +246,15 @@ public final class Values {
         }
     }
 
+    /**
+     * Converts a value to a long, truncating any fraction.
+     *
+     * @param _v
+     *            the value (may be null)
+     * @return the value, 0 for null
+     * @throws SQLException
+     *             if the value is not a number or out of range for long
+     */
     public static long toLong(final Object _v) throws SQLException {
         if (null == _v) {
             return 0;
@@ -218,6 +281,15 @@ public final class Values {
         }
     }
 
+    /**
+     * Converts a value to an int, truncating any fraction.
+     *
+     * @param _v
+     *            the value (may be null)
+     * @return the value, 0 for null
+     * @throws SQLException
+     *             if the value is not a number or out of range for int
+     */
     public static int toInt(final Object _v) throws SQLException {
         final long l = toLong(_v);
         if (l > Integer.MAX_VALUE || l < Integer.MIN_VALUE) {
@@ -226,6 +298,15 @@ public final class Values {
         return (int) l;
     }
 
+    /**
+     * Converts a value to a short, truncating any fraction.
+     *
+     * @param _v
+     *            the value (may be null)
+     * @return the value, 0 for null
+     * @throws SQLException
+     *             if the value is not a number or out of range for short
+     */
     public static short toShort(final Object _v) throws SQLException {
         final long l = toLong(_v);
         if (l > Short.MAX_VALUE || l < Short.MIN_VALUE) {
@@ -234,6 +315,15 @@ public final class Values {
         return (short) l;
     }
 
+    /**
+     * Converts a value to a byte, truncating any fraction.
+     *
+     * @param _v
+     *            the value (may be null)
+     * @return the value, 0 for null
+     * @throws SQLException
+     *             if the value is not a number or out of range for byte
+     */
     public static byte toByte(final Object _v) throws SQLException {
         final long l = toLong(_v);
         if (l > Byte.MAX_VALUE || l < Byte.MIN_VALUE) {
@@ -242,6 +332,15 @@ public final class Values {
         return (byte) l;
     }
 
+    /**
+     * Converts a value to bytes. Strings are encoded as UTF-8.
+     *
+     * @param _v
+     *            the value (may be null)
+     * @return the bytes, or null for null
+     * @throws SQLException
+     *             if the value is neither binary nor a string
+     */
     public static byte[] toBytes(final Object _v) throws SQLException {
         if (null == _v) {
             return null;
@@ -257,6 +356,17 @@ public final class Values {
 
     // ------------------------------------------------------------------ date/time
 
+    /**
+     * Converts a value to a date.
+     *
+     * @param _v
+     *            a Date, a Timestamp, or the text of a date or timestamp (may be null)
+     * @param _cal
+     *            the calendar (time zone) to interpret the date in, or null for the default time zone
+     * @return the date, or null for null
+     * @throws SQLException
+     *             if the value cannot be converted
+     */
     public static Date toDate(final Object _v, final Calendar _cal) throws SQLException {
         if (null == _v) {
             return null;
@@ -269,7 +379,7 @@ public final class Values {
             final LocalDate ld = t.toLocalDateTime().toLocalDate();
             return null == _cal ? Date.valueOf(ld) : shiftDate(Date.valueOf(ld), _cal);
         }
-        final Matcher m = TS.matcher(toString(_v).trim());
+        final Matcher m = s_timestampPattern.matcher(toString(_v).trim());
         if (!m.matches()) {
             throw conversion(_v, "Date");
         }
@@ -285,6 +395,17 @@ public final class Values {
         return new Date(c.getTimeInMillis());
     }
 
+    /**
+     * Converts a value to a time.
+     *
+     * @param _v
+     *            a Time, a Timestamp, or the text of a time or timestamp (may be null)
+     * @param _cal
+     *            the calendar (time zone) to interpret the time in, or null for the default time zone
+     * @return the time, or null for null
+     * @throws SQLException
+     *             if the value cannot be converted
+     */
     public static Time toTime(final Object _v, final Calendar _cal) throws SQLException {
         if (null == _v) {
             return null;
@@ -297,12 +418,12 @@ public final class Values {
             return makeTime(lt.getHour(), lt.getMinute(), lt.getSecond(), _cal);
         }
         final String s = toString(_v).trim();
-        final Matcher m = TIME.matcher(s);
+        final Matcher m = s_timePattern.matcher(s);
         if (m.matches()) {
             return makeTime(Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)),
                     null == m.group(3) ? 0 : Integer.parseInt(m.group(3)), _cal);
         }
-        final Matcher t = TS.matcher(s);
+        final Matcher t = s_timestampPattern.matcher(s);
         if (t.matches() && null != t.group(4)) {
             return makeTime(Integer.parseInt(t.group(4)), Integer.parseInt(t.group(5)),
                     null == t.group(6) ? 0 : Integer.parseInt(t.group(6)), _cal);
@@ -310,9 +431,22 @@ public final class Values {
         throw conversion(_v, "Time");
     }
 
+    /**
+     * Builds a time of day. Hour 24 (end of day) maps to midnight when no calendar is given.
+     *
+     * @param _h
+     *            the hour
+     * @param _m
+     *            the minute
+     * @param _s
+     *            the second
+     * @param _cal
+     *            the calendar (time zone) to interpret the time in, or null for the default time zone
+     * @return the time
+     */
     private static Time makeTime(final int _h, final int _m, final int _s, final Calendar _cal) {
         if (null == _cal) {
-            return Time.valueOf(LocalTime.of(_h == 24 ? 0 : _h, _m, _s));
+            return Time.valueOf(LocalTime.of(24 == _h ? 0 : _h, _m, _s));
         }
         final Calendar c = (Calendar) _cal.clone();
         c.clear();
@@ -320,6 +454,18 @@ public final class Values {
         return new Time(c.getTimeInMillis());
     }
 
+    /**
+     * Converts a value to a timestamp. Fractions beyond nanoseconds are truncated and hour 24 rolls over to the
+     * next day.
+     *
+     * @param _v
+     *            a Timestamp, Date, Time, or the text of a date or timestamp (may be null)
+     * @param _cal
+     *            the calendar (time zone) to interpret the timestamp in, or null for the default time zone
+     * @return the timestamp, or null for null
+     * @throws SQLException
+     *             if the value cannot be converted
+     */
     public static Timestamp toTimestamp(final Object _v, final Calendar _cal) throws SQLException {
         if (null == _v) {
             return null;
@@ -333,7 +479,7 @@ public final class Values {
         if (_v instanceof Time) {
             return new Timestamp(((Time) _v).getTime());
         }
-        final Matcher m = TS.matcher(toString(_v).trim());
+        final Matcher m = s_timestampPattern.matcher(toString(_v).trim());
         if (!m.matches()) {
             throw conversion(_v, "Timestamp");
         }
@@ -355,7 +501,7 @@ public final class Values {
             nanos = Integer.parseInt(f);
         }
         boolean nextDay = false;
-        if (h == 24) {
+        if (24 == h) {
             h = 0;
             nextDay = true;
         }
@@ -375,6 +521,15 @@ public final class Values {
         return ts;
     }
 
+    /**
+     * Reinterprets the local date of a date in the given calendar's time zone.
+     *
+     * @param _d
+     *            the date
+     * @param _cal
+     *            the calendar
+     * @return the shifted date
+     */
     private static Date shiftDate(final Date _d, final Calendar _cal) {
         final LocalDate ld = _d.toLocalDate();
         final Calendar c = (Calendar) _cal.clone();
@@ -383,6 +538,15 @@ public final class Values {
         return new Date(c.getTimeInMillis());
     }
 
+    /**
+     * Reinterprets the local date and time of a timestamp in the given calendar's time zone, keeping the nanos.
+     *
+     * @param _t
+     *            the timestamp
+     * @param _cal
+     *            the calendar
+     * @return the shifted timestamp
+     */
     private static Timestamp shiftTimestamp(final Timestamp _t, final Calendar _cal) {
         final LocalDateTime ldt = _t.toLocalDateTime();
         final Calendar c = (Calendar) _cal.clone();
@@ -394,71 +558,83 @@ public final class Values {
         return ts;
     }
 
-    /** Converts to the class requested via {@code getObject(int, Class)}. */
+    /**
+     * Converts to the class requested via {@code getObject(int, Class)}.
+     *
+     * @param <T>
+     *            the requested type
+     * @param _v
+     *            the value (may be null)
+     * @param _type
+     *            the requested class
+     * @return the converted value, or null for null
+     * @throws SQLException
+     *             if the value cannot be converted to the requested class
+     */
     @SuppressWarnings("unchecked")
     public static <T> T toClass(final Object _v, final Class<T> _type) throws SQLException {
         if (null == _v) {
             return null;
         }
-        if (_type.isInstance(_v) && !(_v instanceof java.util.Date && _type == java.util.Date.class)) {
+        if (_type.isInstance(_v) && !(_v instanceof java.util.Date && java.util.Date.class == _type)) {
             return (T) _v;
         }
         final Object r;
-        if (_type == String.class) {
+        if (String.class == _type) {
             r = toString(_v);
-        } else if (_type == Integer.class || _type == int.class) {
+        } else if (Integer.class == _type || int.class == _type) {
             r = toInt(_v);
-        } else if (_type == Long.class || _type == long.class) {
+        } else if (Long.class == _type || long.class == _type) {
             r = toLong(_v);
-        } else if (_type == Short.class || _type == short.class) {
+        } else if (Short.class == _type || short.class == _type) {
             r = toShort(_v);
-        } else if (_type == Byte.class || _type == byte.class) {
+        } else if (Byte.class == _type || byte.class == _type) {
             r = toByte(_v);
-        } else if (_type == Double.class || _type == double.class) {
+        } else if (Double.class == _type || double.class == _type) {
             r = toDouble(_v);
-        } else if (_type == Float.class || _type == float.class) {
+        } else if (Float.class == _type || float.class == _type) {
             r = (float) toDouble(_v);
-        } else if (_type == Boolean.class || _type == boolean.class) {
+        } else if (Boolean.class == _type || boolean.class == _type) {
             r = toBoolean(_v);
-        } else if (_type == BigDecimal.class) {
+        } else if (BigDecimal.class == _type) {
             r = toBigDecimal(_v);
-        } else if (_type == BigInteger.class) {
+        } else if (BigInteger.class == _type) {
             r = toBigDecimal(_v).toBigInteger();
-        } else if (_type == byte[].class) {
+        } else if (byte[].class == _type) {
             r = toBytes(_v);
-        } else if (_type == Date.class) {
+        } else if (Date.class == _type) {
             r = toDate(_v, null);
-        } else if (_type == Time.class) {
+        } else if (Time.class == _type) {
             r = toTime(_v, null);
-        } else if (_type == Timestamp.class || _type == java.util.Date.class) {
+        } else if (Timestamp.class == _type || java.util.Date.class == _type) {
             r = toTimestamp(_v, null);
-        } else if (_type == LocalDate.class) {
+        } else if (LocalDate.class == _type) {
             r = toDate(_v, null).toLocalDate();
-        } else if (_type == LocalTime.class) {
+        } else if (LocalTime.class == _type) {
             if (_v instanceof Timestamp) {
                 r = ((Timestamp) _v).toLocalDateTime().toLocalTime();
             } else {
                 r = toTime(_v, null).toLocalTime();
             }
-        } else if (_type == LocalDateTime.class) {
+        } else if (LocalDateTime.class == _type) {
             r = toTimestamp(_v, null).toLocalDateTime();
-        } else if (_type == OffsetDateTime.class) {
+        } else if (OffsetDateTime.class == _type) {
             r = toTimestamp(_v, null).toLocalDateTime().atZone(ZoneId.systemDefault()).toOffsetDateTime();
-        } else if (_type == java.time.Instant.class) {
+        } else if (java.time.Instant.class == _type) {
             r = toTimestamp(_v, null).toInstant();
-        } else if (_type == UUID.class) {
+        } else if (UUID.class == _type) {
             r = UUID.fromString(toString(_v).trim());
-        } else if (_type == Clob.class || _type == java.sql.NClob.class) {
+        } else if (Clob.class == _type || java.sql.NClob.class == _type) {
             r = new Lobs.ClobImpl(toString(_v));
-        } else if (_type == Blob.class) {
+        } else if (Blob.class == _type) {
             r = new Lobs.BlobImpl(toBytes(_v));
-        } else if (_type == java.sql.SQLXML.class) {
+        } else if (java.sql.SQLXML.class == _type) {
             r = new Lobs.SqlXmlImpl(toString(_v));
-        } else if (_type == Reader.class) {
+        } else if (Reader.class == _type) {
             r = new StringReader(toString(_v));
-        } else if (_type == InputStream.class) {
+        } else if (InputStream.class == _type) {
             r = new ByteArrayInputStream(_v instanceof byte[] ? (byte[]) _v : toString(_v).getBytes(StandardCharsets.UTF_8));
-        } else if (_type == Object.class) {
+        } else if (Object.class == _type) {
             r = _v;
         } else {
             throw conversion(_v, _type.getName());
@@ -466,6 +642,15 @@ public final class Values {
         return (T) r;
     }
 
+    /**
+     * Builds the exception for a failed conversion. Long values are abbreviated in the message.
+     *
+     * @param _v
+     *            the value that could not be converted (not null)
+     * @param _target
+     *            the name of the target type
+     * @return the exception (SQLSTATE 22018)
+     */
     static SQLException conversion(final Object _v, final String _target) {
         String shown = String.valueOf(_v);
         if (shown.length() > 64) {

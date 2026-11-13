@@ -10,24 +10,24 @@ import java.sql.Types;
  */
 public class Db2ShellParameterMetaData implements ParameterMetaData {
 
-    private final int[] types;
-    private final int[] modes;
+    private final int[] m_types;
+    private final int[] m_modes;
 
     Db2ShellParameterMetaData(final int[] _types, final int[] _modes) {
-        types = _types;
-        modes = _modes;
+        m_types = _types;
+        m_modes = _modes;
     }
 
     private int check(final int _p) throws SQLException {
-        if (_p < 1 || _p > types.length) {
-            throw new SQLException("Parameter index " + _p + " out of range (1.." + types.length + ")", "07009");
+        if (_p < 1 || _p > m_types.length) {
+            throw new SQLException("Parameter index " + _p + " out of range (1.." + m_types.length + ")", "07009");
         }
         return _p - 1;
     }
 
     @Override
     public int getParameterCount() {
-        return types.length;
+        return m_types.length;
     }
 
     @Override
@@ -38,9 +38,9 @@ public class Db2ShellParameterMetaData implements ParameterMetaData {
 
     @Override
     public boolean isSigned(final int _p) throws SQLException {
-        final int t = types[check(_p)];
-        return t == Types.INTEGER || t == Types.BIGINT || t == Types.SMALLINT || t == Types.DECIMAL
-                || t == Types.NUMERIC || t == Types.DOUBLE || t == Types.REAL || t == Types.FLOAT;
+        final int t = m_types[check(_p)];
+        return Types.INTEGER == t || Types.BIGINT == t || Types.SMALLINT == t || Types.DECIMAL == t
+                || Types.NUMERIC == t || Types.DOUBLE == t || Types.REAL == t || Types.FLOAT == t;
     }
 
     @Override
@@ -57,12 +57,21 @@ public class Db2ShellParameterMetaData implements ParameterMetaData {
 
     @Override
     public int getParameterType(final int _p) throws SQLException {
-        return types[check(_p)];
+        return m_types[check(_p)];
     }
 
+    /**
+     * Returns the SQL type name for the type of the value set for a parameter.
+     *
+     * @param _p
+     *            the 1-based parameter index
+     * @return the type name; {@code VARCHAR} when the type is unknown
+     * @throws SQLException
+     *             if the parameter index is out of range
+     */
     @Override
     public String getParameterTypeName(final int _p) throws SQLException {
-        switch (types[check(_p)]) {
+        switch (m_types[check(_p)]) {
         case Types.INTEGER: return "INTEGER";
         case Types.BIGINT: return "BIGINT";
         case Types.SMALLINT: return "SMALLINT";
@@ -81,9 +90,18 @@ public class Db2ShellParameterMetaData implements ParameterMetaData {
         }
     }
 
+    /**
+     * Returns the Java class name for the type of the value set for a parameter.
+     *
+     * @param _p
+     *            the 1-based parameter index
+     * @return the fully qualified class name; {@code java.lang.String} when the type is unknown
+     * @throws SQLException
+     *             if the parameter index is out of range
+     */
     @Override
     public String getParameterClassName(final int _p) throws SQLException {
-        switch (types[check(_p)]) {
+        switch (m_types[check(_p)]) {
         case Types.INTEGER:
         case Types.SMALLINT: return Integer.class.getName();
         case Types.BIGINT: return Long.class.getName();
@@ -103,7 +121,7 @@ public class Db2ShellParameterMetaData implements ParameterMetaData {
 
     @Override
     public int getParameterMode(final int _p) throws SQLException {
-        return modes[check(_p)];
+        return m_modes[check(_p)];
     }
 
     @Override

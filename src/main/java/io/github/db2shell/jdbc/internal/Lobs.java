@@ -26,7 +26,17 @@ public final class Lobs {
     private Lobs() {
     }
 
-    /** Reads a whole character stream. */
+    /**
+     * Reads a whole character stream. The reader is not closed.
+     *
+     * @param _r
+     *            the reader
+     * @param _max
+     *            the maximum number of characters to read, or -1 for no limit
+     * @return the characters read
+     * @throws SQLException
+     *             if reading fails
+     */
     public static String readAll(final Reader _r, final long _max) throws SQLException {
         final StringBuilder sb = new StringBuilder();
         final char[] buf = new char[8192];
@@ -45,7 +55,17 @@ public final class Lobs {
         return sb.toString();
     }
 
-    /** Reads a whole byte stream. */
+    /**
+     * Reads a whole byte stream. The stream is not closed.
+     *
+     * @param _in
+     *            the stream
+     * @param _max
+     *            the maximum number of bytes to read, or -1 for no limit
+     * @return the bytes read
+     * @throws SQLException
+     *             if reading fails
+     */
     public static byte[] readAll(final InputStream _in, final long _max) throws SQLException {
         final ByteArrayOutputStream bos = new ByteArrayOutputStream();
         final byte[] buf = new byte[8192];
@@ -69,17 +89,17 @@ public final class Lobs {
 
     /** A CLOB/NCLOB backed by a String. */
     public static final class ClobImpl implements NClob {
-        private StringBuilder data;
+        private StringBuilder m_data;
 
         public ClobImpl(final String _s) {
-            data = new StringBuilder(null == _s ? "" : _s);
+            m_data = new StringBuilder(null == _s ? "" : _s);
         }
 
         private StringBuilder d() throws SQLException {
-            if (null == data) {
+            if (null == m_data) {
                 throw SqlErrors.closed("Clob");
             }
-            return data;
+            return m_data;
         }
 
         @Override
@@ -87,6 +107,17 @@ public final class Lobs {
             return d().length();
         }
 
+        /**
+         * Returns part of the value.
+         *
+         * @param _pos
+         *            1-based position of the first character
+         * @param _length
+         *            the maximum number of characters
+         * @return the characters (fewer if the value ends first)
+         * @throws SQLException
+         *             if the position is outside the value or the CLOB has been freed
+         */
         @Override
         public String getSubString(final long _pos, final int _length) throws SQLException {
             final StringBuilder sb = d();
@@ -123,6 +154,21 @@ public final class Lobs {
             return setString(_pos, _str, 0, _str.length());
         }
 
+        /**
+         * Overwrites characters starting at a position, padding with blanks if the position is past the end.
+         *
+         * @param _pos
+         *            1-based position of the first character to write
+         * @param _str
+         *            the source string
+         * @param _offset
+         *            offset of the first character in the source string
+         * @param _len
+         *            the number of characters to write
+         * @return the number of characters written
+         * @throws SQLException
+         *             if the CLOB has been freed
+         */
         @Override
         public int setString(final long _pos, final String _str, final int _offset, final int _len) throws SQLException {
             final StringBuilder sb = d();
@@ -153,7 +199,7 @@ public final class Lobs {
 
         @Override
         public void free() {
-            data = null;
+            m_data = null;
         }
 
         @Override
@@ -163,23 +209,23 @@ public final class Lobs {
 
         @Override
         public String toString() {
-            return null == data ? "" : data.toString();
+            return null == m_data ? "" : m_data.toString();
         }
     }
 
     /** A BLOB backed by a byte array. */
     public static final class BlobImpl implements Blob {
-        private byte[] data;
+        private byte[] m_data;
 
         public BlobImpl(final byte[] _b) {
-            data = null == _b ? new byte[0] : _b;
+            m_data = null == _b ? new byte[0] : _b;
         }
 
         private byte[] d() throws SQLException {
-            if (null == data) {
+            if (null == m_data) {
                 throw SqlErrors.closed("Blob");
             }
-            return data;
+            return m_data;
         }
 
         @Override
@@ -187,6 +233,17 @@ public final class Lobs {
             return d().length;
         }
 
+        /**
+         * Returns part of the value.
+         *
+         * @param _pos
+         *            1-based position of the first byte
+         * @param _length
+         *            the maximum number of bytes
+         * @return the bytes (fewer if the value ends first)
+         * @throws SQLException
+         *             if the position is outside the value or the BLOB has been freed
+         */
         @Override
         public byte[] getBytes(final long _pos, final int _length) throws SQLException {
             final byte[] b = d();
@@ -202,6 +259,17 @@ public final class Lobs {
             return new ByteArrayInputStream(d());
         }
 
+        /**
+         * Finds a byte pattern.
+         *
+         * @param _pattern
+         *            the bytes to search for
+         * @param _start
+         *            1-based position to start searching at
+         * @return the 1-based position of the first match, or -1 if there is none
+         * @throws SQLException
+         *             if the BLOB has been freed
+         */
         @Override
         public long position(final byte[] _pattern, final long _start) throws SQLException {
             final byte[] b = d();
@@ -226,13 +294,28 @@ public final class Lobs {
             return setBytes(_pos, _bytes, 0, _bytes.length);
         }
 
+        /**
+         * Overwrites bytes starting at a position, extending the value with zero bytes if needed.
+         *
+         * @param _pos
+         *            1-based position of the first byte to write
+         * @param _bytes
+         *            the source bytes
+         * @param _offset
+         *            offset of the first byte in the source array
+         * @param _len
+         *            the number of bytes to write
+         * @return the number of bytes written
+         * @throws SQLException
+         *             if the BLOB has been freed
+         */
         @Override
         public int setBytes(final long _pos, final byte[] _bytes, final int _offset, final int _len) throws SQLException {
             final int start = (int) (_pos - 1);
             final byte[] b = d();
             final byte[] n = java.util.Arrays.copyOf(b, Math.max(b.length, start + _len));
             System.arraycopy(_bytes, _offset, n, start, _len);
-            data = n;
+            m_data = n;
             return _len;
         }
 
@@ -243,12 +326,12 @@ public final class Lobs {
 
         @Override
         public void truncate(final long _len) throws SQLException {
-            data = java.util.Arrays.copyOf(d(), (int) _len);
+            m_data = java.util.Arrays.copyOf(d(), (int) _len);
         }
 
         @Override
         public void free() {
-            data = null;
+            m_data = null;
         }
 
         @Override
@@ -259,27 +342,34 @@ public final class Lobs {
 
     /** An SQLXML value backed by a String. */
     public static final class SqlXmlImpl implements SQLXML {
-        private String data;
-        private StringWriter writer;
+        private String m_data;
+        private StringWriter m_writer;
 
         public SqlXmlImpl(final String _s) {
-            data = _s;
+            m_data = _s;
         }
 
+        /**
+         * The current value, first taking over anything written through a writer handed out earlier.
+         *
+         * @return the value
+         * @throws SQLException
+         *             if the value has been freed
+         */
         private String d() throws SQLException {
-            if (null != writer) {
-                data = writer.toString();
-                writer = null;
+            if (null != m_writer) {
+                m_data = m_writer.toString();
+                m_writer = null;
             }
-            if (null == data) {
+            if (null == m_data) {
                 throw SqlErrors.closed("SQLXML");
             }
-            return data;
+            return m_data;
         }
 
         @Override
         public void free() {
-            data = null;
+            m_data = null;
         }
 
         @Override
@@ -299,8 +389,8 @@ public final class Lobs {
 
         @Override
         public Writer setCharacterStream() {
-            writer = new StringWriter();
-            return writer;
+            m_writer = new StringWriter();
+            return m_writer;
         }
 
         @Override
@@ -310,32 +400,44 @@ public final class Lobs {
 
         @Override
         public void setString(final String _value) {
-            data = _value;
-            writer = null;
+            m_data = _value;
+            m_writer = null;
         }
 
         @Override
         @SuppressWarnings("unchecked")
         public <T extends Source> T getSource(final Class<T> _sourceClass) throws SQLException {
-            if (null == _sourceClass || _sourceClass == StreamSource.class || _sourceClass == Source.class) {
+            if (null == _sourceClass || StreamSource.class == _sourceClass || Source.class == _sourceClass) {
                 return (T) new StreamSource(new StringReader(d()));
             }
             throw SqlErrors.unsupported("SQLXML source " + _sourceClass.getName());
         }
 
+        /**
+         * Returns a result that replaces the value with whatever is written to it. Only stream results are
+         * supported.
+         *
+         * @param <T>
+         *            the result type
+         * @param _resultClass
+         *            StreamResult, Result, or null
+         * @return the result
+         * @throws SQLException
+         *             if another result class is requested
+         */
         @Override
         @SuppressWarnings("unchecked")
         public <T extends Result> T setResult(final Class<T> _resultClass) throws SQLException {
-            if (null == _resultClass || _resultClass == StreamResult.class || _resultClass == Result.class) {
-                writer = new StringWriter();
-                return (T) new StreamResult(writer);
+            if (null == _resultClass || StreamResult.class == _resultClass || Result.class == _resultClass) {
+                m_writer = new StringWriter();
+                return (T) new StreamResult(m_writer);
             }
             throw SqlErrors.unsupported("SQLXML result " + _resultClass.getName());
         }
 
         @Override
         public String toString() {
-            return null == writer ? data : writer.toString();
+            return null == m_writer ? m_data : m_writer.toString();
         }
     }
 }

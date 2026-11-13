@@ -10,13 +10,20 @@ import java.io.InputStream;
  */
 final class PumpedInputStream extends InputStream {
 
-    private final byte[] buf = new byte[1024 * 1024];
-    private int head = 0; // next byte to read
-    private int count = 0; // bytes available
-    private boolean eof = false;
-    private boolean aborted = false;
-    private IOException failure;
+    private final byte[] m_buf = new byte[1024 * 1024];
+    private int m_head = 0; // next byte to read
+    private int m_count = 0; // bytes available
+    private boolean m_eof = false;
+    private boolean m_aborted = false;
+    private IOException m_failure;
 
+    /**
+     * Starts a daemon thread that copies {@code _src} into this stream's buffer until end of stream, a read failure,
+     * or {@link #abort()}.
+     *
+     * @param _src the process output to copy
+     * @param _threadName the name of the pump thread
+     */
     PumpedInputStream(final InputStream _src, final String _threadName) {
         final Thread t = new Thread(new Runnable() {
             @Override
@@ -28,6 +35,12 @@ final class PumpedInputStream extends InputStream {
         t.start();
     }
 
+    /**
+     * Copies {@code _src} into the buffer, waiting while it is full. A read failure is recorded so that readers see
+     * it once the buffered bytes are consumed; in every case end of stream is signalled to readers.
+     *
+     * @param _src the process output to copy
+     */
     private void pump(final InputStream _src) {
         final byte[] chunk = new byte[16384];
         try {
@@ -39,17 +52,17 @@ final class PumpedInputStream extends InputStream {
                 int off = 0;
                 while (off < n) {
                     synchronized (this) {
-                        while (count == buf.length && !aborted) {
+                        while (m_count == m_buf.length && !m_aborted) {
                             wait();
                         }
-                        if (aborted) {
+                        if (m_aborted) {
                             return;
                         }
-                        final int tail = (head + count) % buf.length;
-                        final int space = Math.min(buf.length - count, buf.length - tail);
+                        final int tail = (m_head + m_count) % m_buf.length;
+                        final int space = Math.min(m_buf.length - m_count, m_buf.length - tail);
                         final int len = Math.min(space, n - off);
-                        System.arraycopy(chunk, off, buf, tail, len);
-                        count += len;
+                        System.arraycopy(chunk, off, m_buf, tail, len);
+                        m_count += len;
                         off += len;
                         notifyAll();
                     }
@@ -57,13 +70,15 @@ final class PumpedInputStream extends InputStream {
             }
         } catch (final IOException e) {
             synchronized (this) {
-                failure = e;
+                m_failure = e;
             }
         } catch (final InterruptedException e) {
+            // The pump thread has no caller to report to: restore the flag and stop pumping; the finally block
+            // signals end of stream to readers.
             Thread.currentThread().interrupt();
         } finally {
             synchronized (this) {
-                eof = true;
+                m_eof = true;
                 notifyAll();
             }
         }
@@ -71,12 +86,18 @@ final class PumpedInputStream extends InputStream {
 
     /** Releases all readers; subsequent reads fail. */
     synchronized void abort() {
-        aborted = true;
+        m_aborted = true;
         notifyAll();
     }
 
+    /**
+     * Waits until bytes are available, the pump has reached end of stream, or the stream was aborted. Must be called
+     * while holding this object's monitor.
+     *
+     * @throws IOException if the stream was aborted or the waiting thread was interrupted
+     */
     private void await() throws IOException {
-        while (count == 0 && !eof && !aborted) {
+        while (0 == m_count && !m_eof && !m_aborted) {
             try {
                 wait();
             } catch (final InterruptedException e) {
@@ -84,50 +105,67 @@ final class PumpedInputStream extends InputStream {
                 throw new IOException("interrupted", e);
             }
         }
-        if (aborted) {
+        if (m_aborted) {
             throw new IOException("db2 utility session was ended");
         }
     }
 
+    /**
+     * Reads one byte, blocking until one is available.
+     *
+     * @return the byte, or -1 at end of stream
+     * @throws IOException if the stream was aborted, the wait was interrupted, or the pump failed to read the process
+     *             output
+     */
     @Override
     public synchronized int read() throws IOException {
         await();
-        if (count == 0) {
-            if (null != failure) {
-                throw failure;
+        if (0 == m_count) {
+            if (null != m_failure) {
+                throw m_failure;
             }
             return -1;
         }
-        final int b = buf[head] & 0xff;
-        head = (head + 1) % buf.length;
-        count--;
+        final int b = m_buf[m_head] & 0xff;
+        m_head = (m_head + 1) % m_buf.length;
+        m_count--;
         notifyAll();
         return b;
     }
 
+    /**
+     * Reads up to {@code _len} bytes, blocking until at least one is available.
+     *
+     * @param _b the destination buffer
+     * @param _off the offset in {@code _b} at which to store the bytes
+     * @param _len the maximum number of bytes to read
+     * @return the number of bytes read, or -1 at end of stream
+     * @throws IOException if the stream was aborted, the wait was interrupted, or the pump failed to read the process
+     *             output
+     */
     @Override
     public synchronized int read(final byte[] _b, final int _off, final int _len) throws IOException {
-        if (_len == 0) {
+        if (0 == _len) {
             return 0;
         }
         await();
-        if (count == 0) {
-            if (null != failure) {
-                throw failure;
+        if (0 == m_count) {
+            if (null != m_failure) {
+                throw m_failure;
             }
             return -1;
         }
-        final int n = Math.min(_len, Math.min(count, buf.length - head));
-        System.arraycopy(buf, head, _b, _off, n);
-        head = (head + n) % buf.length;
-        count -= n;
+        final int n = Math.min(_len, Math.min(m_count, m_buf.length - m_head));
+        System.arraycopy(m_buf, m_head, _b, _off, n);
+        m_head = (m_head + n) % m_buf.length;
+        m_count -= n;
         notifyAll();
         return n;
     }
 
     @Override
     public synchronized int available() {
-        return count;
+        return m_count;
     }
 
     @Override
