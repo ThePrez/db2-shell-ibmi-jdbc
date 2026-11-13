@@ -19,7 +19,7 @@ public final class SqlLiterals {
     static final int BX_PIECE = 8000;
     /** Concatenations whose total length exceeds this are promoted to LOBs. */
     static final int VARCHAR_LIMIT = 32000;
-    private static final char[] HEX = "0123456789ABCDEF".toCharArray();
+    private static final char[] s_hexDigits = "0123456789ABCDEF".toCharArray();
 
     private SqlLiterals() {
     }
@@ -30,7 +30,17 @@ public final class SqlLiterals {
         return enc.canEncode(_s);
     }
 
-    /** Builds a literal for the given string content. */
+    /**
+     * Builds a literal for the given string content. Text the charset cannot encode becomes a UTF-16 literal;
+     * newlines become CHR(10)/CHR(13) and long text is split into concatenated pieces (cast to CLOB when the
+     * total exceeds the VARCHAR limit).
+     *
+     * @param _s
+     *            the string content
+     * @param _cs
+     *            the job charset
+     * @return the SQL literal or concatenation expression
+     */
     public static String string(final String _s, final Charset _cs) {
         if (!canEncode(_cs, _s)) {
             return unicode(_s);
@@ -45,12 +55,12 @@ public final class SqlLiterals {
         final StringBuilder cur = new StringBuilder();
         for (int i = 0; i < _s.length(); i++) {
             final char c = _s.charAt(i);
-            if (c == '\n' || c == '\r') {
+            if ('\n' == c || '\r' == c) {
                 if (cur.length() > 0) {
                     pieces = appendPiece(sb, pieces, quote(cur.toString()));
                     cur.setLength(0);
                 }
-                pieces = appendPiece(sb, pieces, c == '\n' ? "CHR(10)" : "CHR(13)");
+                pieces = appendPiece(sb, pieces, '\n' == c ?"CHR(10)" : "CHR(13)");
             } else {
                 cur.append(c);
                 if (cur.length() >= CHAR_PIECE && !Character.isHighSurrogate(c)) {
@@ -62,10 +72,10 @@ public final class SqlLiterals {
         if (cur.length() > 0) {
             pieces = appendPiece(sb, pieces, quote(cur.toString()));
         }
-        if (pieces == 0) {
+        if (0 == pieces) {
             return "''";
         }
-        if (pieces == 1) {
+        if (1 == pieces) {
             return sb.toString();
         }
         String first = sb.toString();
@@ -78,6 +88,17 @@ public final class SqlLiterals {
         return "(" + first + ")";
     }
 
+    /**
+     * Appends a piece to a concatenation.
+     *
+     * @param _sb
+     *            the concatenation built so far
+     * @param _pieces
+     *            the number of pieces already appended
+     * @param _piece
+     *            the piece to append
+     * @return the new number of pieces
+     */
     private static int appendPiece(final StringBuilder _sb, final int _pieces, final String _piece) {
         if (_pieces > 0) {
             _sb.append(" CONCAT ");
@@ -91,7 +112,13 @@ public final class SqlLiterals {
         return "'" + _s.replace("'", "''") + "'";
     }
 
-    /** A UTF-16 graphic literal, split into pieces when long. */
+    /**
+     * A UTF-16 graphic literal, split into pieces when long (never inside a surrogate pair).
+     *
+     * @param _s
+     *            the string content
+     * @return the UX literal or concatenation expression
+     */
     public static String unicode(final String _s) {
         final byte[] b = _s.getBytes(StandardCharsets.UTF_16BE);
         final int chars = b.length / 2;
@@ -120,7 +147,13 @@ public final class SqlLiterals {
         return sb.append(')').toString();
     }
 
-    /** A binary literal ({@code BX'..'}), split into pieces when long. */
+    /**
+     * A binary literal ({@code BX'..'}), split into pieces when long.
+     *
+     * @param _b
+     *            the bytes
+     * @return the BX literal or concatenation expression
+     */
     public static String binary(final byte[] _b) {
         if (_b.length <= BX_PIECE) {
             return "BX'" + hex(_b, 0, _b.length) + "'";
@@ -140,16 +173,34 @@ public final class SqlLiterals {
         return sb.append(')').toString();
     }
 
+    /**
+     * Upper-case hex encoding of part of a byte array.
+     *
+     * @param _b
+     *            the bytes
+     * @param _off
+     *            the offset of the first byte
+     * @param _len
+     *            the number of bytes
+     * @return two hex digits per byte
+     */
     public static String hex(final byte[] _b, final int _off, final int _len) {
         final char[] c = new char[_len * 2];
         for (int i = 0; i < _len; i++) {
             final int v = _b[_off + i] & 0xff;
-            c[i * 2] = HEX[v >>> 4];
-            c[i * 2 + 1] = HEX[v & 0xf];
+            c[i * 2] = s_hexDigits[v >>> 4];
+            c[i * 2 + 1] = s_hexDigits[v & 0xf];
         }
         return new String(c);
     }
 
+    /**
+     * Decodes hex text. A trailing odd digit is ignored.
+     *
+     * @param _s
+     *            the hex text
+     * @return the bytes
+     */
     public static byte[] unhex(final String _s) {
         final int n = _s.length() / 2;
         final byte[] b = new byte[n];
@@ -159,7 +210,14 @@ public final class SqlLiterals {
         return b;
     }
 
-    /** Splits text into string-literal pieces suitable for building a CLOB/VARCHAR variable in a compound. */
+    /**
+     * Splits text into string-literal pieces suitable for building a CLOB/VARCHAR variable in a compound.
+     *
+     * @param _s
+     *            the text (normally SQL statement text)
+     * @return a quoted literal, or a concatenation of quoted pieces (cast to CLOB when longer than the VARCHAR
+     *         limit)
+     */
     public static String concatenatedLiteral(final String _s) {
         if (_s.length() <= CHAR_PIECE) {
             return quote(_s);

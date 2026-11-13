@@ -61,7 +61,14 @@ public final class QueryBuilder {
 
     // =================================================================================== describe
 
-    /** A dynamic compound statement that PREPAREs and DESCRIBEs a query into {@link #META_TABLE}. */
+    /**
+     * A dynamic compound statement that PREPAREs and DESCRIBEs a query into {@link #META_TABLE}, one row per
+     * result column.
+     *
+     * @param _query
+     *            normalized query text
+     * @return the compound statement
+     */
     public static String describe(final String _query) {
         final StringBuilder sb = new StringBuilder(_query.length() + 1200);
         sb.append("BEGIN DECLARE JDBC_N INTEGER DEFAULT 0; DECLARE JDBC_I INTEGER DEFAULT 1; ");
@@ -113,16 +120,29 @@ public final class QueryBuilder {
 
     /** The generated data query plus what is needed to read it. */
     public static final class StreamQuery {
-        public final String sql;
-        /** Width of each output line. */
-        public final int lineWidth;
-        /** Highest line number needed in the numbers table (0 when rows are a single line). */
-        public final int numsNeeded;
+        private final String m_sql;
+        private final int m_lineWidth;
+        private final int m_numsNeeded;
 
         StreamQuery(final String _sql, final int _lineWidth, final int _numsNeeded) {
-            sql = _sql;
-            lineWidth = _lineWidth;
-            numsNeeded = _numsNeeded;
+            m_sql = _sql;
+            m_lineWidth = _lineWidth;
+            m_numsNeeded = _numsNeeded;
+        }
+
+        /** The SQL to run. */
+        public String getSql() {
+            return m_sql;
+        }
+
+        /** Width of each output line. */
+        public int getLineWidth() {
+            return m_lineWidth;
+        }
+
+        /** Highest line number needed in the numbers table (0 when rows are a single line). */
+        public int getNumsNeeded() {
+            return m_numsNeeded;
         }
     }
 
@@ -136,6 +156,7 @@ public final class QueryBuilder {
      * @param _unicode hex-encode character data as UTF-16
      * @param _lobMax maximum characters/bytes returned from LOB and XML values
      * @param _sbcs true if the job charset is single-byte (one byte per character)
+     * @return the wrapped query, its output line width and the numbers-table size it needs
      */
     public static StreamQuery stream(final String _query, final List<ColumnInfo> _cols, final long _maxRows,
             final int _lineWidth, final boolean _unicode, final int _lobMax, final boolean _sbcs) {
@@ -192,7 +213,13 @@ public final class QueryBuilder {
     /**
      * The text form of a column value inside the token stream.
      *
+     * @param _c the column
+     * @param _ref the correlation name referring to the column value
+     * @param _unicode hex-encode character data as UTF-16
+     * @param _lobMax maximum characters/bytes returned from LOB and XML values
+     * @param _sbcs true if the job charset is single-byte (one byte per character)
      * @param _len receives the maximum length (bytes) of the text form
+     * @return the SQL expression producing the text form
      */
     static String value(final ColumnInfo _c, final String _ref, final boolean _unicode, final int _lobMax,
             final boolean _sbcs, final long[] _len) {
@@ -213,7 +240,7 @@ public final class QueryBuilder {
         case XML: {
             final String src;
             final int m;
-            if (_c.getKind() == ColumnInfo.Kind.XML) {
+            if (ColumnInfo.Kind.XML == _c.getKind()) {
                 src = "XMLSERIALIZE(" + _ref + " AS CLOB(2G))";
                 m = _lobMax;
             } else {
@@ -223,7 +250,7 @@ public final class QueryBuilder {
             if (_unicode) {
                 return unicodeHex(src, m, _len);
             }
-            final String sub = m < len || _c.getKind() == ColumnInfo.Kind.XML ? "SUBSTRING(" + src + ", 1, " + m + ")" : src;
+            final String sub = m < len || ColumnInfo.Kind.XML == _c.getKind() ? "SUBSTRING(" + src + ", 1, " + m + ")" : src;
             final long bytes = _sbcs ? m : m * 2L + 2;
             _len[0] = bytes;
             if (bytes <= VARCHAR_MAX) {
@@ -233,10 +260,10 @@ public final class QueryBuilder {
         }
         case BINARY:
         case BLOB: {
-            final int m = _c.getKind() == ColumnInfo.Kind.BLOB ? Math.min(len, _lobMax) : len;
+            final int m = ColumnInfo.Kind.BLOB == _c.getKind() ?Math.min(len, _lobMax) : len;
             _len[0] = m * 2L;
             if (m <= HEX_BYTES_PIECE) {
-                if (_c.getKind() == ColumnInfo.Kind.BLOB && m < len) {
+                if (ColumnInfo.Kind.BLOB == _c.getKind() && m < len) {
                     return "HEX(SUBSTRING(" + _ref + ", 1, " + m + "))";
                 }
                 return "HEX(" + _ref + ")";
@@ -279,7 +306,15 @@ public final class QueryBuilder {
         }
     }
 
-    /** HEX of the UTF-16 form of a character value of at most {@code _chars} characters. */
+    /**
+     * HEX of the UTF-16 form of a character value of at most {@code _chars} characters, split into pieces when
+     * long.
+     *
+     * @param _src the SQL expression of the character value
+     * @param _chars the maximum number of characters
+     * @param _len receives the maximum length (bytes) of the hex text
+     * @return the SQL expression producing the hex text
+     */
     private static String unicodeHex(final String _src, final int _chars, final long[] _len) {
         _len[0] = _chars * 4L;
         if (_chars <= UNICODE_CHARS_PIECE) {
@@ -289,12 +324,20 @@ public final class QueryBuilder {
                 + UNICODE_CHARS_PIECE + ") CCSID 1200))", _chars, UNICODE_CHARS_PIECE, _chars * 4L);
     }
 
-    /** Concatenates {@code ceil(_total/_piece)} copies of a format with %d replaced by the 1-based start offset. */
+    /**
+     * Concatenates {@code ceil(_total/_piece)} copies of a format with %d replaced by the 1-based start offset.
+     *
+     * @param _fmt the expression format, containing %d once or more
+     * @param _total the total length to cover
+     * @param _piece the length covered by each copy
+     * @param _resultLen the maximum length of the result; above the VARCHAR limit the result is cast to CLOB
+     * @return the parenthesized concatenation
+     */
     private static String pieces(final String _fmt, final int _total, final int _piece, final long _resultLen) {
         final StringBuilder sb = new StringBuilder();
         for (long off = 1; off <= _total; off += _piece) {
             final String p = _fmt.replace("%d", Long.toString(off));
-            if (off == 1) {
+            if (1 == off) {
                 if (_resultLen > VARCHAR_MAX) {
                     sb.append("CAST(").append(p).append(" AS CLOB(").append(_resultLen + 16).append("))");
                 } else {

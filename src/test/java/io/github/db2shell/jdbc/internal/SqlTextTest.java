@@ -15,10 +15,10 @@ import org.junit.jupiter.api.Test;
 
 class SqlTextTest {
 
-    private static final Charset EBCDIC = Charset.forName("IBM037");
+    private static final Charset s_ebcdic = Charset.forName("IBM037");
 
     private static SqlText p(final String _sql) throws SQLException {
-        return SqlText.parse(_sql, EBCDIC, true);
+        return SqlText.parse(_sql, s_ebcdic, true);
     }
 
     @Test
@@ -43,7 +43,7 @@ class SqlTextTest {
     @Test
     void rewritesUnencodableLiteralsAsUnicode() throws SQLException {
         // the euro sign is not in CCSID 37
-        assertEquals("values UX'20AC0041'", p("values '€A'").getSql());
+        assertEquals("values UX'20AC0041'", p("values '\u20acA'").getSql());
     }
 
     @Test
@@ -73,6 +73,13 @@ class SqlTextTest {
         assertEquals("select a as \"x%\" from t where b like 'a%'", p("select a as \"x%\" from t where b like 'a%'").getSql());
     }
 
+    /**
+     * Verifies that JDBC escape sequences for dates, timestamps, functions and procedure calls are translated
+     * to native SQL.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void jdbcEscapes() throws SQLException {
         assertEquals("select DATE( '2024-01-02'), TIMESTAMP( '2024-01-02 10:00:00'), ucase(x) from t",
@@ -95,6 +102,10 @@ class SqlTextTest {
         assertEquals("", parts[2]);
     }
 
+    /**
+     * Verifies that trailing isolation, read-only and optimize clauses are split off a query, but that the
+     * same words inside literals or subqueries, and a FETCH FIRST clause, are left in the query body.
+     */
     @Test
     void splitsTailClauses() {
         String[] parts = SqlText.splitQuery("select * from t where x = 'with ur' order by 1 with ur");
@@ -110,6 +121,13 @@ class SqlTextTest {
         assertEquals("select * from t fetch first 5 rows only", parts[1]);
     }
 
+    /**
+     * Verifies statement classification: an INSERT in parentheses is not a query, while parenthesized
+     * unions and VALUES are.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void notAQuery() throws SQLException {
         final SqlText t = p("  (insert into t values 1)");
@@ -119,6 +137,10 @@ class SqlTextTest {
         assertTrue(p("VALUES 1").isQuery());
     }
 
+    /**
+     * Verifies that a long statement is split into input lines no longer than the limit, never inside a
+     * string literal, so that rejoining the lines with spaces gives back the statement.
+     */
     @Test
     void splitsLongInputLines() {
         final StringBuilder sb = new StringBuilder("values ");
@@ -140,16 +162,23 @@ class SqlTextTest {
         }
     }
 
+    /**
+     * Verifies that long string literals are split into concatenated pieces, and that very long ones are
+     * additionally wrapped in a CAST.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void longLiteralsAreSplit() throws SQLException {
         final StringBuilder sb = new StringBuilder();
         for (int i = 0; i < 20000; i++) {
             sb.append('x');
         }
-        final String lit = SqlLiterals.string(sb.toString(), EBCDIC);
+        final String lit = SqlLiterals.string(sb.toString(), s_ebcdic);
         assertTrue(lit.startsWith("('xxx"));
         assertEquals(3, lit.split(" CONCAT ").length);
-        final String big = SqlLiterals.string(sb.toString() + sb + sb + sb, EBCDIC);
+        final String big = SqlLiterals.string(sb.toString() + sb + sb + sb, s_ebcdic);
         assertTrue(big.startsWith("(CAST('xxx"), big.substring(0, 20));
     }
 

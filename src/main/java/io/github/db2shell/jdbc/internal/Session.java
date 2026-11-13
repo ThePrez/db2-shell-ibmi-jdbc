@@ -42,9 +42,9 @@ public final class Session {
 
     /** The interactive prompt. */
     static final String PROMPT = "DB2>";
-    private static final Pattern RECORDS =Pattern.compile("^\\s*\\d+\\s+RECORD\\(S\\) SELECTED\\.\\s*$");
-    private static final Pattern DB2_MSG = Pattern.compile("^DB2\\d{4,5}([IWE])\\s+(.*)$");
-    private static final Timer TIMER = new Timer("db2shell-timeout", true);
+    private static final Pattern s_records = Pattern.compile("^\\s*\\d+\\s+RECORD\\(S\\) SELECTED\\.\\s*$");
+    private static final Pattern s_db2Msg = Pattern.compile("^DB2\\d{4,5}([IWE])\\s+(.*)$");
+    private static final Timer s_timer = new Timer("db2shell-timeout", true);
 
     /** Receives a request to finish reading an open result before another command can be sent. */
     public interface ResultOwner {
@@ -54,35 +54,64 @@ public final class Session {
 
     /** What a statement produced. */
     public static final class Response {
-        public final SQLException error;
-        public final List<SQLWarning> warnings;
-        /** Header line of a result table, or null when the statement produced no table. */
-        public final byte[] header;
-        /** Column ranges derived from the dash line: pairs of [start, length] in bytes. */
-        public final int[][] columns;
-        /** Total row width in bytes (capped at {@link Session#MAX_OUTPUT_LINE}). */
-        public final int width;
+        private final SQLException m_error;
+        private final List<SQLWarning> m_warnings;
+        private final byte[] m_header;
+        private final int[][] m_columns;
+        private final int m_width;
 
+        /**
+         * @param _error the error the statement produced, or null
+         * @param _warnings warnings the statement produced (never null)
+         * @param _header header line of a result table, or null when the statement produced no table
+         * @param _columns column ranges of a result table as [start, length] pairs, or null
+         * @param _width total row width in bytes of a result table (0 when there is none)
+         */
         Response(final SQLException _error, final List<SQLWarning> _warnings, final byte[] _header, final int[][] _columns,
                 final int _width) {
-            error = _error;
-            warnings = _warnings;
-            header = _header;
-            columns = _columns;
-            width = _width;
+            m_error = _error;
+            m_warnings = _warnings;
+            m_header = _header;
+            m_columns = _columns;
+            m_width = _width;
+        }
+
+        /** The error the statement produced, or null. */
+        public SQLException getError() {
+            return m_error;
+        }
+
+        /** Warnings the statement produced (never null; may be appended to). */
+        public List<SQLWarning> getWarnings() {
+            return m_warnings;
+        }
+
+        /** Header line of a result table, or null when the statement produced no table. */
+        public byte[] getHeader() {
+            return m_header;
+        }
+
+        /** Column ranges derived from the dash line: pairs of [start, length] in bytes. */
+        public int[][] getColumns() {
+            return m_columns;
+        }
+
+        /** Total row width in bytes (capped at {@link Session#MAX_OUTPUT_LINE}). */
+        public int getWidth() {
+            return m_width;
         }
 
         public boolean isResult() {
-            return null != header;
+            return null != m_header;
         }
 
         public boolean isError() {
-            return null != error;
+            return null != m_error;
         }
 
-        /** The first native error code of the response (0 if none). */
-        public String sqlState() {
-            return null == error ? null : error.getSQLState();
+        /** The SQLSTATE of the error, or null if there is none. */
+        public String getSqlState() {
+            return null == m_error ? null : m_error.getSQLState();
         }
     }
 
@@ -90,35 +119,42 @@ public final class Session {
         STARTING, IDLE, RESULT, DEAD
     }
 
-    private final Transport transport;
-    private final Tracer tracer;
-    private Charset charset;
-    private byte newline;
-    private LineReader reader;
-    private OutputStream out;
-    private State state = State.STARTING;
-    private ResultOwner owner;
-    private final List<SQLWarning> resultWarnings = new ArrayList<SQLWarning>();
-    private volatile boolean killedByTimeout = false;
-    private volatile boolean killed = false;
-    private TimerTask pendingTimeout;
-    private volatile TimerTask pendingKill;
+    private final Transport m_transport;
+    private final Tracer m_tracer;
+    private Charset m_charset;
+    private byte m_newline;
+    private LineReader m_reader;
+    private OutputStream m_out;
+    private State m_state = State.STARTING;
+    private ResultOwner m_owner;
+    private final List<SQLWarning> m_resultWarnings = new ArrayList<SQLWarning>();
+    private volatile boolean m_killedByTimeout = false;
+    private volatile boolean m_killed = false;
+    private TimerTask m_pendingTimeout;
+    private volatile TimerTask m_pendingKill;
     /** Timeout still armed while waiting for the first row of a result (-1 when not armed). */
-    private int rowTimeoutSeconds = -1;
+    private int m_rowTimeoutSeconds = -1;
     /** True while waiting for the response to a statement. */
-    private volatile boolean inFlight = false;
-    private volatile Runnable canceller;
+    private volatile boolean m_inFlight = false;
+    private volatile Runnable m_canceller;
     /** Seconds to wait for a cancelled statement to end before the session is abandoned. */
     static final int CANCEL_GRACE_SECONDS = 10;
-    private String encodingNote;
+    private String m_encodingNote;
 
     public Session(final Transport _transport, final Charset _charset, final Tracer _tracer) {
-        transport = _transport;
-        charset = _charset;
-        tracer = _tracer;
-        newline = newlineByte(_charset);
+        m_transport = _transport;
+        m_charset = _charset;
+        m_tracer = _tracer;
+        m_newline = newlineByte(_charset);
     }
 
+    /**
+     * Returns the byte that ends an output line of the utility in the given encoding.
+     *
+     * @param _cs the encoding of the utility's output
+     * @return the newline byte
+     * @throws IllegalArgumentException if the encoding has no single-byte newline
+     */
     static byte newlineByte(final Charset _cs) {
         // Some JDKs encode '\n' as EBCDIC NEL (0x15), but the utility ends lines with 0x25, which decodes to LF.
         // Prefer the byte that *decodes* to LF.
@@ -128,32 +164,32 @@ public final class Session {
             }
         }
         final byte[] nl = "\n".getBytes(_cs);
-        if (nl.length != 1) {
+        if (1 != nl.length) {
             throw new IllegalArgumentException("Encoding " + _cs + " is not supported (newline is not a single byte)");
         }
         return nl[0];
     }
 
     public Charset getCharset() {
-        return charset;
+        return m_charset;
     }
 
     /** A note about how the output encoding was determined, if it was adjusted automatically. */
     public String getEncodingNote() {
-        return encodingNote;
+        return m_encodingNote;
     }
 
     public boolean isDead() {
-        return state == State.DEAD;
+        return State.DEAD == m_state;
     }
 
     /** False if the utility process has ended (e.g. it was killed after a timeout). */
     public boolean isProcessAlive() {
-        return transport.isAlive();
+        return m_transport.isAlive();
     }
 
     public boolean isIdle() {
-        return state == State.IDLE;
+        return State.IDLE == m_state;
     }
 
     // =================================================================================== startup
@@ -161,13 +197,18 @@ public final class Session {
     /**
      * Waits for the first prompt. Detects whether the output is EBCDIC or ASCII; if the encoding was not given
      * explicitly and the output turns out to be ASCII, switches to UTF-8 (the PASE default).
+     *
+     * @param _timeoutSeconds 0 for no timeout; otherwise the process is killed if the prompt does not appear in time
+     * @param _charsetExplicit true if the encoding was configured explicitly and must not be adjusted
+     * @throws SQLException if the utility does not start, reports a connection error, or its output does not match
+     *             an explicitly configured encoding
      */
     public void start(final int _timeoutSeconds, final boolean _charsetExplicit) throws SQLException {
-        final InputStream in = transport.getInput();
-        out = transport.getOutput();
+        final InputStream in = m_transport.getInput();
+        m_out = m_transport.getOutput();
         armTimeout(_timeoutSeconds);
         // the prompt is printed without a newline while the utility waits for input
-        final byte[] want = PROMPT.getBytes(charset);
+        final byte[] want = PROMPT.getBytes(m_charset);
         final byte[] ascii = PROMPT.getBytes(StandardCharsets.US_ASCII);
         final ByteArrayOutputStream seen = new ByteArrayOutputStream();
         boolean asciiDetected = false;
@@ -188,7 +229,7 @@ public final class Session {
                 }
             }
         } catch (final IOException e) {
-            state = State.DEAD;
+            m_state = State.DEAD;
             throw connectionError("Unable to read from the db2 utility", e);
         } finally {
             disarmTimeout();
@@ -196,44 +237,51 @@ public final class Session {
         final byte[] s = seen.toByteArray();
         if (asciiDetected) {
             if (_charsetExplicit) {
-                state = State.DEAD;
+                m_state = State.DEAD;
                 throw new SQLNonTransientConnectionException("The db2 utility output appears to be ASCII, but encoding "
-                        + charset.name() + " was configured. Set the 'encoding' property to an ASCII-based charset "
+                        + m_charset.name() + " was configured. Set the 'encoding' property to an ASCII-based charset "
                         + "(e.g. UTF-8 or ISO-8859-1).", "08001");
             }
-            encodingNote = "db2 utility output is ASCII-based; using UTF-8 instead of " + charset.name();
-            charset = StandardCharsets.UTF_8;
-            newline = newlineByte(charset);
-            tracer.trace("encoding", encodingNote);
+            m_encodingNote = "db2 utility output is ASCII-based; using UTF-8 instead of " + m_charset.name();
+            m_charset = StandardCharsets.UTF_8;
+            m_newline = newlineByte(m_charset);
+            m_tracer.trace("encoding", m_encodingNote);
         } else if (!endsWith(s, want)) {
-            state = State.DEAD;
-            final String text = new String(s, charset).trim();
+            m_state = State.DEAD;
+            final String text = new String(s, m_charset).trim();
             if (text.contains("**** CLI ERROR")) {
-                transport.kill();
+                m_transport.kill();
                 throw parseErrorText(text);
             }
-            if (killedByTimeout) {
+            if (m_killedByTimeout) {
                 throw new SQLNonTransientConnectionException("Timed out waiting for the db2 utility to start. Output: "
                         + text, "08001");
             }
-            final String err = transport.getErrorText();
+            final String err = m_transport.getErrorText();
             throw new SQLNonTransientConnectionException("The db2 utility did not start"
                     + (text.isEmpty() ? "" : ". Output: " + text) + (err.isEmpty() ? "" : ". Errors: " + err)
                     + (text.isEmpty() && err.isEmpty() ? " (no output; check the encoding property and the paths "
                             + "of qsh and db2)" : ""), "08001");
         }
-        reader = new LineReader(in, newline, PROMPT.getBytes(charset));
-        state = State.IDLE;
+        m_reader = new LineReader(in, m_newline, PROMPT.getBytes(m_charset));
+        m_state = State.IDLE;
         // A failed connect (bad password, unknown RDB) reports a CLI error before the first prompt.
-        final String pre = new String(s, 0, s.length - want.length, charset);
+        final String pre = new String(s, 0, s.length - want.length, m_charset);
         if (pre.contains("**** CLI ERROR")) {
             final SQLException e = parseErrorText(pre);
             close();
             throw e;
         }
-        tracer.trace("ready", "encoding " + charset.name());
+        m_tracer.trace("ready", "encoding " + m_charset.name());
     }
 
+    /**
+     * Tells whether {@code _s} ends with {@code _suffix}.
+     *
+     * @param _s the bytes to test
+     * @param _suffix the expected trailing bytes
+     * @return true if the last bytes of {@code _s} equal {@code _suffix}
+     */
     private static boolean endsWith(final byte[] _s, final byte[] _suffix) {
         if (_s.length < _suffix.length) {
             return false;
@@ -246,6 +294,12 @@ public final class Session {
         return true;
     }
 
+    /**
+     * Converts the CLI error block the utility printed before its first prompt into a connection failure.
+     *
+     * @param _text the utility output preceding the prompt
+     * @return a connection exception carrying the reported message, SQLSTATE and native error code
+     */
     private SQLException parseErrorText(final String _text) {
         String state = "08001";
         int code = 0;
@@ -277,83 +331,99 @@ public final class Session {
      *
      * @param _sql a statement already normalized to a single line (see {@link SqlText})
      * @param _timeoutSeconds 0 for no timeout; otherwise the process is killed if the response does not start in time
+     * @return the response; for a query, the session then holds an open result until its rows are read
+     * @throws SQLException if the session is unusable, the statement timed out, or the utility cannot be reached
      */
     public Response send(final String _sql, final int _timeoutSeconds) throws SQLException {
         prepareForCommand();
-        tracer.trace("send", _sql);
+        m_tracer.trace("send", _sql);
         try {
             write(_sql);
         } catch (final IOException e) {
-            state = State.DEAD;
+            m_state = State.DEAD;
             throw connectionError("Unable to send to the db2 utility", e);
         }
-        killedByTimeout = false;
-        killed = false;
+        m_killedByTimeout = false;
+        m_killed = false;
         armTimeout(_timeoutSeconds);
         final Response r;
         try {
-            inFlight = true;
+            m_inFlight = true;
             r = readResponse();
         } catch (final SQLException e) {
             disarmTimeout();
             throw e;
         } finally {
-            inFlight = false;
+            m_inFlight = false;
         }
         if (r.isResult()) {
             // The header is printed before the query has produced anything; keep the timeout until the first row.
-            rowTimeoutSeconds = _timeoutSeconds;
+            m_rowTimeoutSeconds = _timeoutSeconds;
         } else {
             disarmTimeout();
         }
-        if (killedByTimeout && r.isError() && "57014".equals(r.error.getSQLState())) {
+        if (m_killedByTimeout && r.isError() && "57014".equals(r.getError().getSQLState())) {
             if (r.isResult()) {
                 discardRows();
             }
             throw new SQLTimeoutException("The statement exceeded the query timeout of " + _timeoutSeconds
-                    + " seconds and was cancelled", "57014", r.error.getErrorCode());
+                    + " seconds and was cancelled", "57014", r.getError().getErrorCode());
         }
         return r;
     }
 
-    /** Ensures the session is idle, asking the owner of any open result to release it. */
+    /**
+     * Ensures the session is idle, asking the owner of any open result to release it.
+     *
+     * @throws SQLException if the session has ended or cannot be made idle
+     */
     void prepareForCommand() throws SQLException {
-        if (state == State.DEAD) {
+        if (State.DEAD == m_state) {
             throw new SQLNonTransientConnectionException("The db2 utility session has ended", "08003");
         }
-        if (state == State.RESULT) {
-            final ResultOwner o = owner;
+        if (State.RESULT == m_state) {
+            final ResultOwner o = m_owner;
             if (null != o) {
                 o.releaseSession();
             }
-            if (state == State.RESULT) {
+            if (State.RESULT == m_state) {
                 discardRows();
             }
         }
-        owner = null;
-        if (state != State.IDLE) {
+        m_owner = null;
+        if (State.IDLE != m_state) {
             throw new SQLNonTransientConnectionException("The db2 utility session is not ready", "08S01");
         }
     }
 
+    /**
+     * Writes a statement to the utility, split into input lines it accepts, followed by the terminator.
+     *
+     * @param _sql the single-line statement
+     * @throws IOException if writing to the utility fails
+     */
     private void write(final String _sql) throws IOException {
         final List<String> lines = splitLines(_sql, MAX_INPUT_LINE);
         final ByteArrayOutputStream bos = new ByteArrayOutputStream(_sql.length() + 16);
         for (int i = 0; i < lines.size(); i++) {
-            bos.write(lines.get(i).getBytes(charset));
+            bos.write(lines.get(i).getBytes(m_charset));
             if (i == lines.size() - 1) {
-                bos.write(String.valueOf(ProcessTransport.TERMINATOR).getBytes(charset));
+                bos.write(String.valueOf(ProcessTransport.TERMINATOR).getBytes(m_charset));
             }
-            bos.write(newline);
+            bos.write(m_newline);
         }
-        out.write(bos.toByteArray());
-        out.flush();
+        m_out.write(bos.toByteArray());
+        m_out.flush();
     }
 
     /**
      * Splits a single-line statement into input lines no longer than {@code _max} characters, breaking only at
      * spaces outside of string literals and delimited identifiers. The utility joins input lines with a space, so
      * breaking at an existing space is lossless.
+     *
+     * @param _sql the single-line statement
+     * @param _max the preferred maximum line length; a line is longer only when it has no usable break
+     * @return the input lines, in order
      */
     static List<String> splitLines(final String _sql, final int _max) {
         final List<String> ret = new ArrayList<String>();
@@ -370,9 +440,9 @@ public final class Session {
                 if (c == quote) {
                     quote = 0;
                 }
-            } else if (c == '\'' || c == '"') {
+            } else if ('\'' == c || '"' == c) {
                 quote = c;
-            } else if (c == ' ') {
+            } else if (' ' == c) {
                 lastBreak = i;
             }
             if (i - start >= _max && lastBreak > start) {
@@ -385,17 +455,24 @@ public final class Session {
         return ret;
     }
 
+    /**
+     * Reads the response to a statement up to the next prompt or, for a query, up to and including the dash line of
+     * the result table.
+     *
+     * @return the response
+     * @throws SQLException if the utility cannot be read or its output cannot be parsed
+     */
     private Response readResponse() throws SQLException {
         final List<SQLWarning> warnings = new ArrayList<SQLWarning>();
         SQLException error = null;
         while (true) {
             final byte[] line = readLineOrDie(true);
             final String t = decode(line).trim();
-            if (t.isEmpty() || t.equals("?>")) {
+            if (t.isEmpty() || "?>".equals(t)) {
                 continue;
             }
-            if (t.equals("DB2>")) {
-                state = State.IDLE;
+            if ("DB2>".equals(t)) {
+                m_state = State.IDLE;
                 return new Response(error, warnings, null, null, 0);
             }
             if (t.startsWith("**** CLI ERROR")) {
@@ -409,7 +486,7 @@ public final class Session {
                 }
                 continue;
             }
-            final Matcher m = DB2_MSG.matcher(t);
+            final Matcher m = s_db2Msg.matcher(t);
             if (m.matches()) {
                 if ("E".equals(m.group(1)) && null == error) {
                     error = SqlErrors.create(t, "HY000", 0);
@@ -422,8 +499,8 @@ public final class Session {
             final byte[] dashes = readLineOrDie(false);
             final int[][] cols = parseDashes(dashes);
             if (null == cols) {
-                state = State.DEAD;
-                transport.kill();
+                m_state = State.DEAD;
+                m_transport.kill();
                 throw SqlErrors.protocol("expected column separator line after '" + t + "' but got '"
                         + decode(dashes) + "'");
             }
@@ -431,16 +508,21 @@ public final class Session {
             if (width > MAX_OUTPUT_LINE) {
                 width = MAX_OUTPUT_LINE;
             }
-            state = State.RESULT;
-            resultWarnings.clear();
+            m_state = State.RESULT;
+            m_resultWarnings.clear();
             return new Response(error, warnings, line, cols, width);
         }
     }
 
-    /** Parses a line like {@code ----- --- ------} into [start,length] pairs; null if it is not a dash line. */
+    /**
+     * Parses a line like {@code ----- --- ------} into [start,length] pairs.
+     *
+     * @param _line the raw line
+     * @return the column ranges, or null if it is not a dash line
+     */
     int[][] parseDashes(final byte[] _line) {
-        final byte dash = "-".getBytes(charset)[0];
-        final byte space = " ".getBytes(charset)[0];
+        final byte dash = "-".getBytes(m_charset)[0];
+        final byte space = " ".getBytes(m_charset)[0];
         final List<int[]> cols = new ArrayList<int[]>();
         int i = 0;
         while (i < _line.length) {
@@ -460,7 +542,12 @@ public final class Session {
         return cols.isEmpty() ? null : cols.toArray(new int[0][]);
     }
 
-    /** Reads an error block after the {@code **** CLI ERROR *****} line. */
+    /**
+     * Reads an error block after the {@code **** CLI ERROR *****} line.
+     *
+     * @return the reported error (which may carry a warning SQLSTATE)
+     * @throws SQLException if the utility cannot be read
+     */
     private SQLException readErrorBlock() throws SQLException {
         String sqlState = "HY000";
         int code = 0;
@@ -468,8 +555,8 @@ public final class Session {
         while (true) {
             final byte[] line = readLineOrDie(true);
             final String t = decode(line).trim();
-            if (t.equals("DB2>")) {
-                reader.unread(line);
+            if ("DB2>".equals(t)) {
+                m_reader.unread(line);
                 break;
             }
             if (t.isEmpty()) {
@@ -486,14 +573,21 @@ public final class Session {
                 msg.append(msg.length() > 0 ? " " : "").append(t);
             }
         }
-        tracer.trace("error", sqlState + " " + code + " " + msg);
+        m_tracer.trace("error", sqlState + " " + code + " " + msg);
         return SqlErrors.create(msg.toString(), sqlState, code);
     }
 
+    /**
+     * Parses a native error code.
+     *
+     * @param _s the decimal text
+     * @return the value, or 0 if the text is not a number
+     */
     private static int parseIntSafe(final String _s) {
         try {
             return Integer.parseInt(_s);
         } catch (final NumberFormatException e) {
+            // a missing or malformed native error code is reported as 0 by design
             return 0;
         }
     }
@@ -502,50 +596,61 @@ public final class Session {
 
     /** Registers who is consuming the current result, so it can be asked to release the session. */
     public void setOwner(final ResultOwner _owner) {
-        owner = _owner;
+        m_owner = _owner;
     }
 
     public boolean isOwner(final ResultOwner _owner) {
-        return state == State.RESULT && owner == _owner;
+        return State.RESULT == m_state && m_owner == _owner;
     }
 
     /** Warnings reported while reading the rows of the current result. */
     public List<SQLWarning> getResultWarnings() {
-        return resultWarnings;
+        return m_resultWarnings;
     }
 
     /**
      * Returns the next row line of the current result, reassembled to {@code _width} bytes when a value contained a
      * newline. Returns null when the result is exhausted (the session is then idle). Throws if the utility reported
      * an error while fetching.
+     *
+     * @param _width the fixed width of a row in bytes
+     * @return the row bytes, or null when the result is exhausted
+     * @throws SQLException if the utility reported an error, the statement timed out, or the utility cannot be read
      */
     public byte[] nextRowLine(final int _width) throws SQLException {
-        if (rowTimeoutSeconds < 0) {
+        if (m_rowTimeoutSeconds < 0) {
             return nextRowLine0(_width);
         }
         try {
             return nextRowLine0(_width);
         } catch (final SQLException e) {
-            if (killedByTimeout && "57014".equals(e.getSQLState())) {
-                throw new SQLTimeoutException("The statement exceeded the query timeout of " + rowTimeoutSeconds
+            if (m_killedByTimeout && "57014".equals(e.getSQLState())) {
+                throw new SQLTimeoutException("The statement exceeded the query timeout of " + m_rowTimeoutSeconds
                         + " seconds and was cancelled", "57014", e.getErrorCode());
             }
             throw e;
         } finally {
-            rowTimeoutSeconds = -1;
+            m_rowTimeoutSeconds = -1;
             disarmTimeout();
         }
     }
 
+    /**
+     * Implements {@link #nextRowLine(int)} without the first-row timeout handling.
+     *
+     * @param _width the fixed width of a row in bytes
+     * @return the row bytes, or null when the result is exhausted or no result is open
+     * @throws SQLException if the utility reported an error or cannot be read
+     */
     private byte[] nextRowLine0(final int _width) throws SQLException {
-        if (state != State.RESULT) {
+        if (State.RESULT != m_state) {
             return null;
         }
         byte[] line = readLineOrDie(false);
-        if (line.length == 0) {
+        if (0 == line.length) {
             final byte[] next = readLineOrDie(true);
             final String t = decode(next).trim();
-            if (RECORDS.matcher(t).matches()) {
+            if (s_records.matcher(t).matches()) {
                 finishToPrompt();
                 return null;
             }
@@ -555,7 +660,7 @@ public final class Session {
                     finishToPrompt();
                     throw e;
                 }
-                resultWarnings.add(SqlErrors.warning(e.getMessage(), e.getSQLState(), e.getErrorCode()));
+                m_resultWarnings.add(SqlErrors.warning(e.getMessage(), e.getSQLState(), e.getErrorCode()));
                 // after a warning, either more rows or the end of the result follow
                 while (true) {
                     final byte[] l = readLineOrDie(true);
@@ -563,15 +668,15 @@ public final class Session {
                     if (lt.isEmpty()) {
                         continue;
                     }
-                    if (RECORDS.matcher(lt).matches()) {
+                    if (s_records.matcher(lt).matches()) {
                         finishToPrompt();
                         return null;
                     }
-                    if (lt.equals("DB2>")) {
-                        state = State.IDLE;
+                    if ("DB2>".equals(lt)) {
+                        m_state = State.IDLE;
                         return null;
                     }
-                    reader.unread(l);
+                    m_reader.unread(l);
                     return nextRowLine0(_width);
                 }
             }
@@ -584,42 +689,60 @@ public final class Session {
         return line;
     }
 
+    /**
+     * Joins two pieces of a row that the utility split at an embedded newline.
+     *
+     * @param _a the first piece
+     * @param _b the second piece
+     * @return {@code _a}, the newline byte, then {@code _b}
+     */
     private byte[] join(final byte[] _a, final byte[] _b) {
         final byte[] r = new byte[_a.length + 1 + _b.length];
         System.arraycopy(_a, 0, r, 0, _a.length);
-        r[_a.length] = newline;
+        r[_a.length] = m_newline;
         System.arraycopy(_b, 0, r, _a.length + 1, _b.length);
         return r;
     }
 
-    /** Reads and discards the remainder of the current result. */
+    /**
+     * Reads and discards the remainder of the current result. Errors reported while discarding are ignored unless
+     * the session ended.
+     *
+     * @throws SQLException if the session ended while discarding
+     */
     public void discardRows() throws SQLException {
-        while (state == State.RESULT) {
+        while (State.RESULT == m_state) {
             try {
                 if (null == nextRowLine(1)) {
                     break;
                 }
             } catch (final SQLException e) {
-                if (state == State.DEAD) {
+                if (State.DEAD == m_state) {
                     throw e;
                 }
-                // errors while discarding are irrelevant
+                // errors while discarding are irrelevant to the caller
+                m_tracer.trace("discard", e);
             }
         }
     }
 
+    /**
+     * Reads up to the next prompt, collecting any warnings, and leaves the session idle.
+     *
+     * @throws SQLException if the utility cannot be read
+     */
     private void finishToPrompt() throws SQLException {
         while (true) {
             final byte[] line = readLineOrDie(true);
             final String t = decode(line).trim();
-            if (t.equals("DB2>")) {
-                state = State.IDLE;
+            if ("DB2>".equals(t)) {
+                m_state = State.IDLE;
                 return;
             }
             if (t.startsWith("**** CLI ERROR")) {
                 final SQLException e = readErrorBlock();
                 if (SqlErrors.isWarningState(e.getSQLState())) {
-                    resultWarnings.add(SqlErrors.warning(e.getMessage(), e.getSQLState(), e.getErrorCode()));
+                    m_resultWarnings.add(SqlErrors.warning(e.getMessage(), e.getSQLState(), e.getErrorCode()));
                 }
             }
         }
@@ -627,46 +750,53 @@ public final class Session {
 
     // =================================================================================== I/O helpers
 
+    /**
+     * Reads the next output line; marks the session dead if the utility cannot be read or has ended.
+     *
+     * @param _promptAware true to return an unterminated prompt as a line
+     * @return the line (never null)
+     * @throws SQLException if reading fails or the utility ended (a timeout or cancel is reported as such)
+     */
     private byte[] readLineOrDie(final boolean _promptAware) throws SQLException {
         final byte[] line;
         try {
-            line = _promptAware ? reader.readLineOrPrompt() : reader.readLine();
+            line = _promptAware ? m_reader.readLineOrPrompt() : m_reader.readLine();
         } catch (final IOException e) {
-            state = State.DEAD;
-            if (killedByTimeout) {
+            m_state = State.DEAD;
+            if (m_killedByTimeout) {
                 throw new SQLTimeoutException("The statement timed out; the db2 utility session was ended", "57014");
             }
             throw connectionError("Error reading from the db2 utility", e);
         }
         if (null == line) {
-            state = State.DEAD;
-            if (killedByTimeout) {
+            m_state = State.DEAD;
+            if (m_killedByTimeout) {
                 throw new SQLTimeoutException("The statement timed out; the db2 utility session was ended", "57014");
             }
-            if (killed) {
+            if (m_killed) {
                 throw new SQLNonTransientConnectionException("The statement was cancelled; the db2 utility session was "
                         + "ended", "57014");
             }
-            final String err = transport.getErrorText();
+            final String err = m_transport.getErrorText();
             throw new SQLNonTransientConnectionException("The db2 utility ended unexpectedly"
                     + (err.isEmpty() ? "" : ": " + err), "08006");
         }
-        if (tracer.isEnabled()) {
-            tracer.trace("recv", decode(line));
+        if (m_tracer.isEnabled()) {
+            m_tracer.trace("recv", decode(line));
         }
         return line;
     }
 
     public String decode(final byte[] _b) {
-        return new String(_b, charset);
+        return new String(_b, m_charset);
     }
 
     public String decode(final byte[] _b, final int _off, final int _len) {
-        return new String(_b, _off, _len, charset);
+        return new String(_b, _off, _len, m_charset);
     }
 
     private SQLException connectionError(final String _msg, final Exception _cause) {
-        final String err = transport.getErrorText();
+        final String err = m_transport.getErrorText();
         return new SQLNonTransientConnectionException(_msg + (err.isEmpty() ? "" : ": " + err), "08006", _cause);
     }
 
@@ -675,32 +805,38 @@ public final class Session {
      * the utility's job). Without one, timeouts and cancels end the session.
      */
     public void setCanceller(final Runnable _canceller) {
-        canceller = _canceller;
+        m_canceller = _canceller;
     }
 
+    /**
+     * Schedules a cancel of the running statement after the given number of seconds.
+     *
+     * @param _seconds the timeout; nothing is scheduled when it is 0 or negative
+     */
     private void armTimeout(final int _seconds) {
         if (_seconds <= 0) {
             return;
         }
-        pendingTimeout = new TimerTask() {
+        m_pendingTimeout = new TimerTask() {
             @Override
             public void run() {
-                killedByTimeout = true;
-                tracer.trace("timeout", "statement exceeded " + _seconds + "s; cancelling");
+                m_killedByTimeout = true;
+                m_tracer.trace("timeout", "statement exceeded " + _seconds + "s; cancelling");
                 cancelThenKill();
             }
         };
-        TIMER.schedule(pendingTimeout, _seconds * 1000L);
+        s_timer.schedule(m_pendingTimeout, _seconds * 1000L);
     }
 
+    /** Cancels any scheduled timeout and any scheduled kill that follows a cancel. */
     private void disarmTimeout() {
-        if (null != pendingTimeout) {
-            pendingTimeout.cancel();
-            pendingTimeout = null;
+        if (null != m_pendingTimeout) {
+            m_pendingTimeout.cancel();
+            m_pendingTimeout = null;
         }
-        if (null != pendingKill) {
-            pendingKill.cancel();
-            pendingKill = null;
+        if (null != m_pendingKill) {
+            m_pendingKill.cancel();
+            m_pendingKill = null;
         }
     }
 
@@ -710,9 +846,9 @@ public final class Session {
      * command), by abandoning the session.
      */
     private void cancelThenKill() {
-        final Runnable c = canceller;
-        if (null == c || state == State.STARTING) {
-            transport.kill();
+        final Runnable c = m_canceller;
+        if (null == c || State.STARTING == m_state) {
+            m_transport.kill();
             return;
         }
         final Thread t = new Thread(c, "db2shell-cancel");
@@ -721,41 +857,41 @@ public final class Session {
         final TimerTask k = new TimerTask() {
             @Override
             public void run() {
-                if (inFlight || state == State.RESULT) {
-                    tracer.trace("cancel", "no response after cancel; ending the db2 utility session");
-                    transport.kill();
+                if (m_inFlight || State.RESULT == m_state) {
+                    m_tracer.trace("cancel", "no response after cancel; ending the db2 utility session");
+                    m_transport.kill();
                 }
             }
         };
-        pendingKill = k;
-        TIMER.schedule(k, CANCEL_GRACE_SECONDS * 1000L);
+        m_pendingKill = k;
+        s_timer.schedule(k, CANCEL_GRACE_SECONDS * 1000L);
     }
 
     /** Cancels the running statement (Statement.cancel()); safe from any thread. */
     public void kill() {
-        if (!inFlight && state != State.RESULT) {
+        if (!m_inFlight && State.RESULT != m_state) {
             return;
         }
-        killed = true;
+        m_killed = true;
         cancelThenKill();
     }
 
     /** Ends the session politely. */
     public void close() {
-        if (state == State.DEAD) {
-            transport.kill();
+        if (State.DEAD == m_state) {
+            m_transport.kill();
             return;
         }
-        state = State.DEAD;
+        m_state = State.DEAD;
         try {
-            if (null != out) {
-                out.write(("quit" + ProcessTransport.TERMINATOR).getBytes(charset));
-                out.write(newline);
-                out.flush();
+            if (null != m_out) {
+                m_out.write(("quit" + ProcessTransport.TERMINATOR).getBytes(m_charset));
+                m_out.write(m_newline);
+                m_out.flush();
             }
         } catch (final IOException e) {
-            // ignore
+            m_tracer.trace("close", e);
         }
-        transport.close();
+        m_transport.close();
     }
 }

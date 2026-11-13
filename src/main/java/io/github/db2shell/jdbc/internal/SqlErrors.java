@@ -18,6 +18,14 @@ public final class SqlErrors {
     private SqlErrors() {
     }
 
+    /**
+     * Creates an exception of the JDBC 4 subclass that matches the class (first two characters) of the SQLSTATE.
+     *
+     * @param _message the exception message
+     * @param _sqlState the SQLSTATE; null is treated as {@code HY000}
+     * @param _vendorCode the native (vendor) error code
+     * @return the exception, a plain {@link SQLException} when the SQLSTATE class has no specific subclass
+     */
     public static SQLException create(final String _message, final String _sqlState, final int _vendorCode) {
         final String state = null == _sqlState ? "HY000" : _sqlState;
         final String cls = state.length() >= 2 ? state.substring(0, 2) : state;

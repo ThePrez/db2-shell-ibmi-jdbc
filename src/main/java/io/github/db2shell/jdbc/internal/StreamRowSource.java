@@ -14,79 +14,114 @@ import java.util.List;
  */
 public abstract class StreamRowSource implements RowSource, Session.ResultOwner {
 
-    protected final Session session;
-    protected final int width;
-    private final Object lock;
-    private final Deque<Object[]> buffer = new ArrayDeque<Object[]>();
-    private final long maxRows;
-    private long produced = 0;
-    private boolean exhausted = false;
-    private boolean closed = false;
-    private SQLException deferred;
-    private final List<SQLWarning> warnings = new ArrayList<SQLWarning>();
+    protected final Session m_session;
+    protected final int m_width;
+    private final Object m_lock;
+    private final Deque<Object[]> m_buffer = new ArrayDeque<Object[]>();
+    private final long m_maxRows;
+    private long m_produced = 0;
+    private boolean m_exhausted = false;
+    private boolean m_closed = false;
+    private SQLException m_deferred;
+    private final List<SQLWarning> m_warnings = new ArrayList<SQLWarning>();
 
+    /**
+     * Creates a source over the result currently open in the session and registers it as the session's result
+     * owner.
+     *
+     * @param _lock
+     *            the connection-level lock guarding the session
+     * @param _session
+     *            the session whose current result this source reads
+     * @param _width
+     *            the width of each output line
+     * @param _maxRows
+     *            0 for no limit; otherwise rows beyond the limit are discarded
+     */
     protected StreamRowSource(final Object _lock, final Session _session, final int _width, final long _maxRows) {
-        lock = _lock;
-        session = _session;
-        width = _width;
-        maxRows = _maxRows;
+        m_lock = _lock;
+        m_session = _session;
+        m_width = _width;
+        m_maxRows = _maxRows;
         _session.setOwner(this);
     }
 
     /** Decodes one row whose first line has already been read. */
     protected abstract Object[] decodeRow(byte[] _firstLine) throws SQLException;
 
-    /** Reads the next physical line of the current row (for rows spanning lines). */
+    /**
+     * Reads the next physical line of the current row (for rows spanning lines).
+     *
+     * @return the line
+     * @throws SQLException
+     *             if the result ends in the middle of a row or the session fails
+     */
     protected byte[] continuation() throws SQLException {
-        final byte[] l = session.nextRowLine(width);
+        final byte[] l = m_session.nextRowLine(m_width);
         if (null == l) {
             throw SqlErrors.protocol("result ended in the middle of a row");
         }
         return l;
     }
 
+    /**
+     * Returns the next row: buffered rows first, then any error deferred while buffering, then rows read from the
+     * session.
+     *
+     * @return the next row, or null when exhausted or closed
+     * @throws SQLException
+     *             if reading or decoding fails
+     */
     @Override
     public Object[] next() throws SQLException {
-        synchronized (lock) {
-            if (!buffer.isEmpty()) {
-                return buffer.poll();
+        synchronized (m_lock) {
+            if (!m_buffer.isEmpty()) {
+                return m_buffer.poll();
             }
-            if (null != deferred) {
-                final SQLException e = deferred;
-                deferred = null;
+            if (null != m_deferred) {
+                final SQLException e = m_deferred;
+                m_deferred = null;
                 throw e;
             }
-            if (exhausted || closed) {
+            if (m_exhausted || m_closed) {
                 return null;
             }
             return readOne();
         }
     }
 
+    /**
+     * Reads and decodes one row from the session, marking the source exhausted at the end of the result (or when
+     * the row limit is reached) and collecting the result's warnings at that point.
+     *
+     * @return the row, or null if the result has ended or the session now belongs to another result
+     * @throws SQLException
+     *             if reading or decoding fails
+     */
     private Object[] readOne() throws SQLException {
-        if (!session.isOwner(this)) {
-            exhausted = true;
+        if (!m_session.isOwner(this)) {
+            m_exhausted = true;
             return null;
         }
         final byte[] line;
         try {
-            line = session.nextRowLine(width);
+            line = m_session.nextRowLine(m_width);
         } catch (final SQLException e) {
-            exhausted = true;
+            m_exhausted = true;
             collectWarnings();
             throw e;
         }
         if (null == line) {
-            exhausted = true;
+            m_exhausted = true;
             collectWarnings();
             return null;
         }
         final Object[] row = decodeRow(line);
-        produced++;
-        if (maxRows > 0 && produced >= maxRows) {
+        m_produced++;
+        if (m_maxRows > 0 && m_produced >= m_maxRows) {
             // the driver could not push the limit into the query (raw mode): discard the rest
-            exhausted = true;
-            session.discardRows();
+            m_exhausted = true;
+            m_session.discardRows();
             collectWarnings();
         }
         return row;
@@ -94,42 +129,53 @@ public abstract class StreamRowSource implements RowSource, Session.ResultOwner 
 
     /** Records a warning produced while decoding rows. */
     protected void addWarning(final SQLWarning _w) {
-        warnings.add(_w);
+        m_warnings.add(_w);
     }
 
     private void collectWarnings() {
-        warnings.addAll(session.getResultWarnings());
+        m_warnings.addAll(m_session.getResultWarnings());
     }
 
+    /**
+     * Gives up the session: the remaining rows are buffered (or discarded if this source is closed). An error
+     * while buffering is deferred to the next {@link #next()} call unless the session itself died.
+     *
+     * @throws SQLException
+     *             if the session died while the rows were being read
+     */
     @Override
     public void releaseSession() throws SQLException {
         // called with the connection lock held
-        if (closed) {
-            session.discardRows();
-            exhausted = true;
+        if (m_closed) {
+            m_session.discardRows();
+            m_exhausted = true;
             return;
         }
         try {
-            while (!exhausted) {
+            while (!m_exhausted) {
                 final Object[] row = readOne();
                 if (null == row) {
                     break;
                 }
-                buffer.add(row);
+                m_buffer.add(row);
             }
         } catch (final SQLException e) {
-            if (session.isDead()) {
+            if (m_session.isDead()) {
                 throw e;
             }
-            deferred = e;
+            m_deferred = e;
         }
     }
 
+    /**
+     * Closes the source and drops buffered rows. Unread output is discarded lazily, when the session is next
+     * needed.
+     */
     @Override
     public void close() throws SQLException {
-        synchronized (lock) {
-            closed = true;
-            buffer.clear();
+        synchronized (m_lock) {
+            m_closed = true;
+            m_buffer.clear();
             // Defer discarding the remaining output until the session is needed again; this keeps close() cheap
             // when the connection is about to be closed anyway.
         }
@@ -137,6 +183,6 @@ public abstract class StreamRowSource implements RowSource, Session.ResultOwner 
 
     @Override
     public List<SQLWarning> getWarnings() {
-        return warnings;
+        return m_warnings;
     }
 }

@@ -34,6 +34,15 @@ public final class Db2ShellCli {
     private Db2ShellCli() {
     }
 
+    /**
+     * Parse the command line, open a connection, and run each SQL statement given as an argument (or read from
+     * stdin when there are none), printing results to stdout. Exits the JVM with status 1 if any statement failed.
+     *
+     * @param _args
+     *            the command line arguments; see the class documentation for the accepted options
+     * @throws Exception
+     *             if the driver cannot be loaded, the connection cannot be opened, or stdin cannot be read
+     */
     public static void main(final String[] _args) throws Exception {
         String url = "jdbc:db2shell:";
         String format = "table";
@@ -62,14 +71,14 @@ public final class Db2ShellCli {
         Class.forName(Db2ShellDriver.class.getName());
         final PrintStream out = new PrintStream(System.out, true, "UTF-8");
         int rc = 0;
-        try (Connection c = DriverManager.getConnection(url, props)) {
+        try (final Connection c = DriverManager.getConnection(url, props)) {
             printWarnings(c.getWarnings());
             if (sqls.isEmpty()) {
                 final BufferedReader br = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
                 final StringBuilder sb = new StringBuilder();
                 String line;
                 while (null != (line = br.readLine())) {
-                    if (line.trim().isEmpty() && sb.length() == 0) {
+                    if (line.trim().isEmpty() && 0 == sb.length()) {
                         continue;
                     }
                     sb.append(line).append('\n');
@@ -90,6 +99,12 @@ public final class Db2ShellCli {
         System.exit(rc);
     }
 
+    /**
+     * Print the command line usage summary.
+     *
+     * @param _out
+     *            the stream to print to
+     */
     private static void usage(final PrintStream _out) {
         _out.println("Usage: java -jar db2-shell-jdbc.jar [options] [SQL ...]");
         _out.println("  -u, --url URL         JDBC URL (default jdbc:db2shell:)");
@@ -99,12 +114,26 @@ public final class Db2ShellCli {
         _out.println("With no SQL arguments, statements are read from stdin (end each with ';').");
     }
 
+    /**
+     * Execute one SQL statement and print its result set or update count. SQL errors are reported to stderr rather
+     * than thrown, so that the remaining statements still run.
+     *
+     * @param _c
+     *            the connection to execute on
+     * @param _sql
+     *            the statement to execute
+     * @param _format
+     *            the output format: table, csv, tsv or json
+     * @param _out
+     *            the stream results are printed to
+     * @return 0 if the statement succeeded, 1 if it failed
+     */
     private static int run(final Connection _c, final String _sql, final String _format, final PrintStream _out) {
-        try (Statement s = _c.createStatement()) {
+        try (final Statement s = _c.createStatement()) {
             final long start = System.nanoTime();
             final boolean isRs = s.execute(_sql);
             if (isRs) {
-                try (ResultSet rs = s.getResultSet()) {
+                try (final ResultSet rs = s.getResultSet()) {
                     final int rows = print(rs, _format, _out);
                     printWarnings(rs.getWarnings());
                     if ("table".equals(_format)) {
@@ -123,6 +152,19 @@ public final class Db2ShellCli {
         }
     }
 
+    /**
+     * Print every row of a result set in the requested format.
+     *
+     * @param _rs
+     *            the result set to print; it is read to the end but not closed
+     * @param _format
+     *            the output format: table, csv, tsv or json (anything else is treated as table)
+     * @param _out
+     *            the stream to print to
+     * @return the number of rows printed
+     * @throws SQLException
+     *             if reading the result set fails
+     */
     private static int print(final ResultSet _rs, final String _format, final PrintStream _out) throws SQLException {
         final ResultSetMetaData md = _rs.getMetaData();
         final int n = md.getColumnCount();
@@ -148,7 +190,7 @@ public final class Db2ShellCli {
         if ("json".equals(_format)) {
             _out.print("[");
             while (_rs.next()) {
-                _out.print(count == 0 ? "\n  {" : ",\n  {");
+                _out.print(0 == count ? "\n  {" : ",\n  {");
                 for (int i = 0; i < n; i++) {
                     final Object v = _rs.getObject(i + 1);
                     _out.print((i > 0 ? ", " : "") + json(head[i]) + ": ");
@@ -163,7 +205,7 @@ public final class Db2ShellCli {
                 _out.print("}");
                 count++;
             }
-            _out.println(count == 0 ? "]" : "\n]");
+            _out.println(0 == count ? "]" : "\n]");
             return count;
         }
         final int[] w = new int[n];
@@ -203,6 +245,17 @@ public final class Db2ShellCli {
         return rows.size();
     }
 
+    /**
+     * Join values into one delimited line. NULL values become empty fields.
+     *
+     * @param _v
+     *            the values to join
+     * @param _sep
+     *            the field separator
+     * @param _quote
+     *            true to quote values CSV-style where needed; false to replace tabs and newlines with spaces
+     * @return the joined line
+     */
     private static String join(final String[] _v, final String _sep, final boolean _quote) {
         final StringBuilder sb = new StringBuilder();
         for (int i = 0; i < _v.length; i++) {
@@ -223,6 +276,13 @@ public final class Db2ShellCli {
         return sb.toString();
     }
 
+    /**
+     * Quote a string as a JSON string literal.
+     *
+     * @param _s
+     *            the string to quote; must not be null
+     * @return the JSON literal, including the surrounding double quotes
+     */
     private static String json(final String _s) {
         final StringBuilder sb = new StringBuilder("\"");
         for (final char c : _s.toCharArray()) {
@@ -243,6 +303,15 @@ public final class Db2ShellCli {
         return sb.append('"').toString();
     }
 
+    /**
+     * Right-pad a string with spaces.
+     *
+     * @param _s
+     *            the string to pad
+     * @param _w
+     *            the minimum width of the result
+     * @return the padded string
+     */
     private static String pad(final String _s, final int _w) {
         final StringBuilder sb = new StringBuilder(_s);
         while (sb.length() < _w) {
@@ -251,6 +320,15 @@ public final class Db2ShellCli {
         return sb.toString();
     }
 
+    /**
+     * Build a string consisting of one character repeated.
+     *
+     * @param _c
+     *            the character to repeat
+     * @param _n
+     *            the number of repetitions
+     * @return the repeated string
+     */
     private static String repeat(final char _c, final int _n) {
         final StringBuilder sb = new StringBuilder();
         for (int i = 0; i < _n; i++) {
@@ -259,6 +337,12 @@ public final class Db2ShellCli {
         return sb.toString();
     }
 
+    /**
+     * Print a chain of SQL warnings to stderr.
+     *
+     * @param _w
+     *            the first warning in the chain, or null for none
+     */
     private static void printWarnings(final SQLWarning _w) {
         SQLWarning w = _w;
         while (null != w) {

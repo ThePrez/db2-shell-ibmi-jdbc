@@ -15,6 +15,13 @@ import io.github.db2shell.jdbc.DriverConfig;
 
 class QueryBuilderTest {
 
+    /**
+     * Collect column descriptions into a mutable list.
+     *
+     * @param _c
+     *            the columns
+     * @return a new list holding the columns in order
+     */
     private static List<ColumnInfo> cols(final ColumnInfo... _c) {
         final List<ColumnInfo> l = new ArrayList<ColumnInfo>();
         for (final ColumnInfo c : _c) {
@@ -23,16 +30,24 @@ class QueryBuilderTest {
         return l;
     }
 
+    /**
+     * Verifies that a result whose rows fit in the line width is streamed as one line per row, with no
+     * number table needed.
+     */
     @Test
     void narrowRowsUseOneLine() {
         final QueryBuilder.StreamQuery q = QueryBuilder.stream("select id from t",
                 cols(ColumnInfo.fromDescriptor("ID", ColumnInfo.D_INTEGER, 4, 9, 0, false, 0, 0, "", "", "")), 0, 128,
                 false, 1000, true);
-        assertEquals(0, q.numsNeeded);
-        assertTrue(q.sql.startsWith("SELECT CAST(COALESCE(VARCHAR(LENGTH(VARCHAR(J1)))"), q.sql);
-        assertTrue(q.sql.endsWith("FROM (select id from t) AS X(J1) ORDER BY ORDER OF X"), q.sql);
+        assertEquals(0, q.getNumsNeeded());
+        assertTrue(q.getSql().startsWith("SELECT CAST(COALESCE(VARCHAR(LENGTH(VARCHAR(J1)))"), q.getSql());
+        assertTrue(q.getSql().endsWith("FROM (select id from t) AS X(J1) ORDER BY ORDER OF X"), q.getSql());
     }
 
+    /**
+     * Verifies that rows wider than the line width are split across several lines using a number table, that
+     * the CTE prefix and isolation clause are kept outside the wrapped query, and that the row limit is applied.
+     */
     @Test
     void wideRowsAreSplitIntoLines() {
         final QueryBuilder.StreamQuery q = QueryBuilder.stream(
@@ -40,12 +55,12 @@ class QueryBuilderTest {
                 cols(ColumnInfo.fromDescriptor("A", ColumnInfo.D_VARCHAR, 2000, 0, 0, true, 37, 0, "", "", ""),
                         ColumnInfo.fromDescriptor("B", ColumnInfo.D_BLOB, 1000000, 0, 0, true, 65535, 0, "", "", "")),
                 10, 128, false, 50000, true);
-        assertTrue(q.numsNeeded > 700, "nums " + q.numsNeeded);
-        assertTrue(q.sql.startsWith("with c as (select * from t) SELECT Z.L FROM (SELECT CAST('' AS CLOB("), q.sql);
-        assertTrue(q.sql.contains("FROM (select * from c) AS X(J1, J2) ORDER BY ORDER OF X FETCH FIRST 10 ROWS ONLY"),
-                q.sql);
-        assertTrue(q.sql.contains("HEX(SUBSTRING(J2, 16001, 16000))"), q.sql);
-        assertTrue(q.sql.endsWith("ORDER BY ORDER OF Y, Z.K with ur"), q.sql);
+        assertTrue(q.getNumsNeeded() > 700, "nums " + q.getNumsNeeded());
+        assertTrue(q.getSql().startsWith("with c as (select * from t) SELECT Z.L FROM (SELECT CAST('' AS CLOB("), q.getSql());
+        assertTrue(q.getSql().contains("FROM (select * from c) AS X(J1, J2) ORDER BY ORDER OF X FETCH FIRST 10 ROWS ONLY"),
+                q.getSql());
+        assertTrue(q.getSql().contains("HEX(SUBSTRING(J2, 16001, 16000))"), q.getSql());
+        assertTrue(q.getSql().endsWith("ORDER BY ORDER OF Y, Z.K with ur"), q.getSql());
     }
 
     @Test
@@ -53,7 +68,7 @@ class QueryBuilderTest {
         final QueryBuilder.StreamQuery q = QueryBuilder.stream("select s from t",
                 cols(ColumnInfo.fromDescriptor("S", ColumnInfo.D_VARCHAR, 10, 0, 0, true, 1208, 0, "", "", "")), 0, 128,
                 true, 1000, true);
-        assertTrue(q.sql.contains("HEX(CAST(J1 AS VARGRAPHIC(10) CCSID 1200))"), q.sql);
+        assertTrue(q.getSql().contains("HEX(CAST(J1 AS VARGRAPHIC(10) CCSID 1200))"), q.getSql());
     }
 
     @Test
@@ -63,6 +78,9 @@ class QueryBuilderTest {
         assertTrue(d.startsWith("BEGIN ") && d.endsWith(" END"));
     }
 
+    /**
+     * Verifies the mapping from db2 descriptor types and CCSIDs to JDBC types, and decimal precision and scale.
+     */
     @Test
     void columnTypeMapping() {
         assertEquals(Types.VARBINARY,
@@ -78,6 +96,13 @@ class QueryBuilderTest {
         assertEquals(2, dec.getScale());
     }
 
+    /**
+     * Verifies how Java parameter values are rendered as SQL literals, including typed NULLs and target type
+     * conversions.
+     *
+     * @throws SQLException
+     *             if a value cannot be rendered as a literal
+     */
     @Test
     void literals() throws SQLException {
         final Charset cs = Charset.forName("IBM037");
@@ -97,6 +122,13 @@ class QueryBuilderTest {
         assertEquals("'2024-01-02'", Params.literal(java.sql.Date.valueOf("2024-01-02"), Types.VARCHAR, -1, cs, true));
     }
 
+    /**
+     * Verifies parsing of the JDBC URL and properties into a driver configuration, and the db2 command line
+     * built from it.
+     *
+     * @throws SQLException
+     *             if the URL cannot be parsed
+     */
     @Test
     void urlParsing() throws SQLException {
         final java.util.Properties p = new java.util.Properties();

@@ -6,37 +6,47 @@ import java.sql.Savepoint;
 /** A savepoint created with {@code SAVEPOINT name ON ROLLBACK RETAIN CURSORS}. */
 final class Db2ShellSavepoint implements Savepoint {
 
-    private final int id;
-    private final String name;
+    private final int m_id;
+    private final String m_name;
 
     Db2ShellSavepoint(final int _id, final String _name) {
-        id = _id;
-        name = _name;
+        m_id = _id;
+        m_name = _name;
     }
 
     @Override
     public int getSavepointId() throws SQLException {
-        if (null != name) {
+        if (null != m_name) {
             throw new SQLException("This is a named savepoint", "3B000");
         }
-        return id;
+        return m_id;
     }
 
     @Override
     public String getSavepointName() throws SQLException {
-        if (null == name) {
+        if (null == m_name) {
             throw new SQLException("This is an unnamed savepoint", "3B000");
         }
-        return name;
+        return m_name;
     }
 
     String sqlName() {
-        if (null == name) {
-            return "JDBC_SAVEPOINT_" + id;
+        if (null == m_name) {
+            return "JDBC_SAVEPOINT_" + m_id;
         }
-        return "\"" + name.replace("\"", "\"\"") + "\"";
+        return "\"" + m_name.replace("\"", "\"\"") + "\"";
     }
 
+    /**
+     * Returns the SQL identifier for any savepoint, including ones not created by this driver: the quoted name
+     * of a named savepoint, otherwise the generated {@code JDBC_SAVEPOINT_n} name.
+     *
+     * @param _sp
+     *            the savepoint
+     * @return the identifier to use in ROLLBACK TO SAVEPOINT / RELEASE SAVEPOINT
+     * @throws SQLException
+     *             if the savepoint is null
+     */
     static String sqlName(final Savepoint _sp) throws SQLException {
         if (_sp instanceof Db2ShellSavepoint) {
             return ((Db2ShellSavepoint) _sp).sqlName();
@@ -47,12 +57,13 @@ final class Db2ShellSavepoint implements Savepoint {
         try {
             return "\"" + _sp.getSavepointName().replace("\"", "\"\"") + "\"";
         } catch (final SQLException e) {
+            // An unnamed savepoint refuses getSavepointName(); that is expected, so fall back to its id.
             return "JDBC_SAVEPOINT_" + _sp.getSavepointId();
         }
     }
 
     @Override
     public String toString() {
-        return null == name ? "Savepoint " + id : "Savepoint " + name;
+        return null == m_name ? "Savepoint " + m_id : "Savepoint " + m_name;
     }
 }

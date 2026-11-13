@@ -19,21 +19,21 @@ public interface RowSource {
 
     /** Rows held in memory. */
     final class ListRowSource implements RowSource {
-        private final List<Object[]> rows;
-        private int pos = 0;
+        private final List<Object[]> m_rows;
+        private int m_pos = 0;
 
         public ListRowSource(final List<Object[]> _rows) {
-            rows = null == _rows ? new ArrayList<Object[]>() : _rows;
+            m_rows = null == _rows ? new ArrayList<Object[]>() : _rows;
         }
 
         @Override
         public Object[] next() {
-            return pos < rows.size() ? rows.get(pos++) : null;
+            return m_pos < m_rows.size() ? m_rows.get(m_pos++) : null;
         }
 
         @Override
         public void close() {
-            pos = rows.size();
+            m_pos = m_rows.size();
         }
 
         @Override

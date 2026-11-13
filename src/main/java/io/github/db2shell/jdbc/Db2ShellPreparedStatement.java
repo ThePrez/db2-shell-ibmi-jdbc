@@ -41,36 +41,69 @@ import io.github.db2shell.jdbc.internal.SqlText;
  */
 public class Db2ShellPreparedStatement extends Db2ShellStatement implements PreparedStatement {
 
-    protected final SqlText parsed;
-    protected final String[] literals;
-    protected final int[] paramTypes;
-    private final int autoKeys;
-    private final String[] keyColumns;
-    private final List<String> batch = new ArrayList<String>();
-    private Boolean booleanSupported;
+    protected final SqlText m_parsed;
+    protected final String[] m_literals;
+    protected final int[] m_paramTypes;
+    private final int m_autoKeys;
+    private final String[] m_keyColumns;
+    private final List<String> m_batch = new ArrayList<String>();
+    private Boolean m_booleanSupported;
 
+    /**
+     * Creates a prepared statement and parses its SQL text. All parameters start unset with type VARCHAR.
+     *
+     * @param _conn
+     *            the connection that owns this statement
+     * @param _sql
+     *            the statement text, with {@code ?} parameter markers
+     * @param _type
+     *            the result set type ({@code ResultSet.TYPE_*})
+     * @param _concurrency
+     *            the result set concurrency ({@code ResultSet.CONCUR_*})
+     * @param _holdability
+     *            the result set holdability ({@code ResultSet.*_CURSORS_*})
+     * @param _autoKeys
+     *            a Statement.*_GENERATED_KEYS constant
+     * @param _keyColumns
+     *            explicit generated-key column names, or null
+     * @throws SQLException
+     *             if the SQL text cannot be parsed
+     */
     Db2ShellPreparedStatement(final Db2ShellConnection _conn, final String _sql, final int _type,
             final int _concurrency, final int _holdability, final int _autoKeys, final String[] _keyColumns)
             throws SQLException {
         super(_conn, _type, _concurrency, _holdability);
-        parsed = parse(_sql);
-        literals = new String[parsed.getParameterCount()];
-        paramTypes = new int[parsed.getParameterCount()];
-        Arrays.fill(paramTypes, Types.VARCHAR);
-        autoKeys = _autoKeys;
-        keyColumns = _keyColumns;
+        m_parsed = parse(_sql);
+        m_literals = new String[m_parsed.getParameterCount()];
+        m_paramTypes = new int[m_parsed.getParameterCount()];
+        Arrays.fill(m_paramTypes, Types.VARCHAR);
+        m_autoKeys = _autoKeys;
+        m_keyColumns = _keyColumns;
     }
 
-    /** Constructor for subclasses that parse the SQL themselves. */
+    /**
+     * Constructor for subclasses that parse the SQL themselves. Generated keys are not requested.
+     *
+     * @param _conn
+     *            the connection that owns this statement
+     * @param _parsed
+     *            the already-parsed statement text
+     * @param _type
+     *            the result set type ({@code ResultSet.TYPE_*})
+     * @param _concurrency
+     *            the result set concurrency ({@code ResultSet.CONCUR_*})
+     * @param _holdability
+     *            the result set holdability ({@code ResultSet.*_CURSORS_*})
+     */
     Db2ShellPreparedStatement(final Db2ShellConnection _conn, final SqlText _parsed, final int _type,
             final int _concurrency, final int _holdability) {
         super(_conn, _type, _concurrency, _holdability);
-        parsed = _parsed;
-        literals = new String[_parsed.getParameterCount()];
-        paramTypes = new int[_parsed.getParameterCount()];
-        Arrays.fill(paramTypes, Types.VARCHAR);
-        autoKeys = Statement.NO_GENERATED_KEYS;
-        keyColumns = null;
+        m_parsed = _parsed;
+        m_literals = new String[_parsed.getParameterCount()];
+        m_paramTypes = new int[_parsed.getParameterCount()];
+        Arrays.fill(m_paramTypes, Types.VARCHAR);
+        m_autoKeys = Statement.NO_GENERATED_KEYS;
+        m_keyColumns = null;
     }
 
     // =================================================================================== helpers
@@ -80,36 +113,45 @@ public class Db2ShellPreparedStatement extends Db2ShellStatement implements Prep
     }
 
     protected boolean booleans() throws SQLException {
-        if (null == booleanSupported) {
-            booleanSupported = connection.booleanSupported();
+        if (null == m_booleanSupported) {
+            m_booleanSupported = m_connection.booleanSupported();
         }
-        return booleanSupported;
+        return m_booleanSupported;
     }
 
+    /**
+     * Validates a 1-based parameter index.
+     *
+     * @param _i
+     *            the 1-based parameter index
+     * @return the corresponding 0-based index
+     * @throws SQLException
+     *             if the statement is closed or the index is out of range
+     */
     protected int index(final int _i) throws SQLException {
         checkOpen();
-        if (_i < 1 || _i > literals.length) {
-            throw new SQLException("Parameter index " + _i + " out of range (1.." + literals.length + ")", "07009");
+        if (_i < 1 || _i > m_literals.length) {
+            throw new SQLException("Parameter index " + _i + " out of range (1.." + m_literals.length + ")", "07009");
         }
         return _i - 1;
     }
 
     protected void set(final int _i, final String _literal, final int _type) throws SQLException {
         final int i = index(_i);
-        literals[i] = _literal;
-        paramTypes[i] = _type;
+        m_literals[i] = _literal;
+        m_paramTypes[i] = _type;
     }
 
     /** The statement text with the current parameter values substituted. */
     protected String boundSql() throws SQLException {
-        return parsed.bind(literals);
+        return m_parsed.bind(m_literals);
     }
 
     // =================================================================================== execution
 
     @Override
     public ResultSet executeQuery() throws SQLException {
-        if (!run(parsed, boundSql(), Statement.NO_GENERATED_KEYS, null)) {
+        if (!run(m_parsed, boundSql(), Statement.NO_GENERATED_KEYS, null)) {
             throw new SQLException("The statement did not return a result set", "02000");
         }
         return getResultSet();
@@ -120,62 +162,78 @@ public class Db2ShellPreparedStatement extends Db2ShellStatement implements Prep
         return (int) executeLargeUpdate();
     }
 
+    /**
+     * Executes the statement with the current parameter values as an update.
+     *
+     * @return the update count, never negative
+     * @throws SQLException
+     *             if the statement is a query, the statement is closed, or execution fails
+     */
     @Override
     public long executeLargeUpdate() throws SQLException {
-        if (parsed.isQuery()) {
+        if (m_parsed.isQuery()) {
             throw new SQLException("executeUpdate cannot run a query; use executeQuery", "07003");
         }
-        run(parsed, boundSql(), autoKeys, keyColumns);
+        run(m_parsed, boundSql(), m_autoKeys, m_keyColumns);
         return Math.max(0, getLargeUpdateCount());
     }
 
     @Override
     public boolean execute() throws SQLException {
-        return run(parsed, boundSql(), autoKeys, keyColumns);
+        return run(m_parsed, boundSql(), m_autoKeys, m_keyColumns);
     }
 
     @Override
     public void addBatch() throws SQLException {
         checkOpen();
-        batch.add(boundSql());
+        m_batch.add(boundSql());
     }
 
     @Override
     public void clearBatch() throws SQLException {
         checkOpen();
-        batch.clear();
+        m_batch.clear();
     }
 
     @Override
     public long[] executeLargeBatch() throws SQLException {
         checkOpen();
-        final List<String> work = new ArrayList<String>(batch);
-        batch.clear();
+        final List<String> work = new ArrayList<String>(m_batch);
+        m_batch.clear();
         return runBatch(work, false);
     }
 
     @Override
     public void clearParameters() throws SQLException {
         checkOpen();
-        Arrays.fill(literals, null);
-        Arrays.fill(paramTypes, Types.VARCHAR);
+        Arrays.fill(m_literals, null);
+        Arrays.fill(m_paramTypes, Types.VARCHAR);
     }
 
+    /**
+     * Describes the columns of the query's result. Unset parameters are described as NULL; if the database cannot
+     * describe the statement that way (for example an untyped NULL), null is returned.
+     *
+     * @return the result set metadata, or null if the statement is not a query or cannot be described
+     * @throws SQLException
+     *             if the statement is closed
+     */
     @Override
     public ResultSetMetaData getMetaData() throws SQLException {
         checkOpen();
-        if (!parsed.isQuery()) {
+        if (!m_parsed.isQuery()) {
             return null;
         }
-        final String[] vals = new String[literals.length];
+        final String[] vals = new String[m_literals.length];
         for (int i = 0; i < vals.length; i++) {
-            vals[i] = null == literals[i] ? "NULL" : literals[i];
+            vals[i] = null == m_literals[i] ? "NULL" : m_literals[i];
         }
         try {
-            final List<ColumnInfo> cols = engine().describe(parsed.bind(vals), getQueryTimeout());
+            final List<ColumnInfo> cols = engine().describe(m_parsed.bind(vals), getQueryTimeout());
             return new Db2ShellResultSetMetaData(cols);
         } catch (final SQLException e) {
             // e.g. an untyped NULL where a parameter has not been set yet
+            m_connection.engine().getTracer().trace("describe", e);
             return null;
         }
     }
@@ -183,9 +241,9 @@ public class Db2ShellPreparedStatement extends Db2ShellStatement implements Prep
     @Override
     public ParameterMetaData getParameterMetaData() throws SQLException {
         checkOpen();
-        final int[] modes = new int[literals.length];
+        final int[] modes = new int[m_literals.length];
         Arrays.fill(modes, ParameterMetaData.parameterModeIn);
-        return new Db2ShellParameterMetaData(paramTypes.clone(), modes);
+        return new Db2ShellParameterMetaData(m_paramTypes.clone(), modes);
     }
 
     // ------------------------------------------------------------------ disallowed Statement methods
@@ -215,7 +273,7 @@ public class Db2ShellPreparedStatement extends Db2ShellStatement implements Prep
     @Override
     public void setNull(final int _i, final int _sqlType) throws SQLException {
         index(_i);
-        set(_i, Params.nullLiteral(_sqlType, _sqlType == Types.BOOLEAN || _sqlType == Types.BIT ? booleans() : true),
+        set(_i, Params.nullLiteral(_sqlType, Types.BOOLEAN == _sqlType || Types.BIT == _sqlType ? booleans() : true),
                 _sqlType);
     }
 
@@ -298,6 +356,18 @@ public class Db2ShellPreparedStatement extends Db2ShellStatement implements Prep
                 Types.TIMESTAMP);
     }
 
+    /**
+     * Sets a DATE parameter, interpreting the value's instant in the calendar's time zone.
+     *
+     * @param _i
+     *            the 1-based parameter index
+     * @param _x
+     *            the value, or null for SQL NULL
+     * @param _cal
+     *            the calendar whose time zone is used, or null for the JVM default
+     * @throws SQLException
+     *             if the index is invalid or the statement is closed
+     */
     @Override
     public void setDate(final int _i, final Date _x, final Calendar _cal) throws SQLException {
         if (null == _x || null == _cal) {
@@ -309,6 +379,18 @@ public class Db2ShellPreparedStatement extends Db2ShellStatement implements Prep
         set(_i, Params.literal(ldt.toLocalDate(), Params.UNSPECIFIED, -1, charset(), true), Types.DATE);
     }
 
+    /**
+     * Sets a TIME parameter, interpreting the value's instant in the calendar's time zone.
+     *
+     * @param _i
+     *            the 1-based parameter index
+     * @param _x
+     *            the value, or null for SQL NULL
+     * @param _cal
+     *            the calendar whose time zone is used, or null for the JVM default
+     * @throws SQLException
+     *             if the index is invalid or the statement is closed
+     */
     @Override
     public void setTime(final int _i, final Time _x, final Calendar _cal) throws SQLException {
         if (null == _x || null == _cal) {
@@ -320,6 +402,18 @@ public class Db2ShellPreparedStatement extends Db2ShellStatement implements Prep
         set(_i, Params.literal(ldt.toLocalTime(), Params.UNSPECIFIED, -1, charset(), true), Types.TIME);
     }
 
+    /**
+     * Sets a TIMESTAMP parameter, interpreting the value's instant in the calendar's time zone.
+     *
+     * @param _i
+     *            the 1-based parameter index
+     * @param _x
+     *            the value, or null for SQL NULL
+     * @param _cal
+     *            the calendar whose time zone is used, or null for the JVM default
+     * @throws SQLException
+     *             if the index is invalid or the statement is closed
+     */
     @Override
     public void setTimestamp(final int _i, final Timestamp _x, final Calendar _cal) throws SQLException {
         if (null == _x || null == _cal) {
@@ -346,11 +440,18 @@ public class Db2ShellPreparedStatement extends Db2ShellStatement implements Prep
     public void setObject(final int _i, final Object _x, final int _targetSqlType, final int _scale)
             throws SQLException {
         index(_i);
-        final boolean b = _targetSqlType == Types.BOOLEAN || _targetSqlType == Types.BIT || _x instanceof Boolean
+        final boolean b = Types.BOOLEAN == _targetSqlType || Types.BIT == _targetSqlType || _x instanceof Boolean
                 ? booleans() : true;
         set(_i, Params.literal(_x, _targetSqlType, _scale, charset(), b), _targetSqlType);
     }
 
+    /**
+     * Infers the JDBC type reported in parameter metadata for a value passed to {@code setObject}.
+     *
+     * @param _x
+     *            the parameter value, possibly null
+     * @return a {@link Types} constant; VARCHAR when the type is not recognised
+     */
     private static int typeOf(final Object _x) {
         if (_x instanceof Integer || _x instanceof Short || _x instanceof Byte) {
             return Types.INTEGER;
@@ -390,6 +491,18 @@ public class Db2ShellPreparedStatement extends Db2ShellStatement implements Prep
         setAsciiStream(_i, _x, (long) _length);
     }
 
+    /**
+     * Sets a character parameter from an ASCII stream, which is read fully when this method is called.
+     *
+     * @param _i
+     *            the 1-based parameter index
+     * @param _x
+     *            the stream, or null for SQL NULL
+     * @param _length
+     *            the number of bytes to read, or -1 to read to the end of the stream
+     * @throws SQLException
+     *             if the index is invalid, the statement is closed, or the stream cannot be read
+     */
     @Override
     public void setAsciiStream(final int _i, final InputStream _x, final long _length) throws SQLException {
         if (null == _x) {
@@ -404,6 +517,19 @@ public class Db2ShellPreparedStatement extends Db2ShellStatement implements Prep
         setAsciiStream(_i, _x, -1L);
     }
 
+    /**
+     * Sets a character parameter from a UTF-16BE stream, which is read fully when this method is called.
+     *
+     * @param _i
+     *            the 1-based parameter index
+     * @param _x
+     *            the stream, or null for SQL NULL
+     * @param _length
+     *            the number of bytes to read
+     * @throws SQLException
+     *             if the index is invalid, the statement is closed, or the stream cannot be read
+     * @deprecated as in {@link PreparedStatement#setUnicodeStream}
+     */
     @Override
     @Deprecated
     public void setUnicodeStream(final int _i, final InputStream _x, final int _length) throws SQLException {

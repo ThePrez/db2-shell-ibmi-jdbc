@@ -19,36 +19,45 @@ import io.github.db2shell.jdbc.internal.SqlLiterals;
  */
 public class Db2ShellDatabaseMetaData implements DatabaseMetaData {
 
-    private final Db2ShellConnection connection;
+    private final Db2ShellConnection m_connection;
 
     Db2ShellDatabaseMetaData(final Db2ShellConnection _conn) {
-        connection = _conn;
+        m_connection = _conn;
     }
 
     private Engine.ServerInfo info() throws SQLException {
-        return connection.engine().getServerInfo();
+        return m_connection.engine().getServerInfo();
     }
 
     // =================================================================================== query helpers
 
     private ResultSet query(final String _sql) throws SQLException {
-        final Db2ShellStatement s = (Db2ShellStatement) connection.createStatement();
+        final Db2ShellStatement s = (Db2ShellStatement) m_connection.createStatement();
         s.closeOnCompletion();
         return s.executeQuery(_sql);
     }
 
-    /** A filter for a JDBC search pattern ({@code %}, {@code _}, escape {@code \}). Empty if it matches all. */
+    /**
+     * Builds a WHERE-clause filter for a JDBC search pattern ({@code %}, {@code _}, escape {@code \}). A pattern
+     * without wildcards becomes an equality test; otherwise a LIKE with {@code \} as the escape character.
+     *
+     * @param _col
+     *            the column the pattern applies to
+     * @param _pattern
+     *            the JDBC search pattern, or null
+     * @return the filter, starting with {@code " AND "}, or an empty string if the pattern matches everything
+     */
     static String pattern(final String _col, final String _pattern) {
-        if (null == _pattern || _pattern.equals("%")) {
+        if (null == _pattern || "%".equals(_pattern)) {
             return "";
         }
         boolean wildcard = false;
         final StringBuilder plain = new StringBuilder();
         for (int i = 0; i < _pattern.length(); i++) {
             final char c = _pattern.charAt(i);
-            if (c == '\\' && i + 1 < _pattern.length()) {
+            if ('\\' == c && i + 1 < _pattern.length()) {
                 plain.append(_pattern.charAt(++i));
-            } else if (c == '%' || c == '_') {
+            } else if ('%' == c || '_' == c) {
                 wildcard = true;
                 break;
             } else {
@@ -69,6 +78,15 @@ public class Db2ShellDatabaseMetaData implements DatabaseMetaData {
         return " AND " + _col + " = " + SqlLiterals.quote(_value);
     }
 
+    /**
+     * Builds an empty in-memory result set with the given columns, for metadata the server does not provide.
+     *
+     * @param _cols
+     *            alternating column names ({@code String}) and {@code java.sql.Types} values ({@code Integer})
+     * @return an empty result set with those columns
+     * @throws SQLException
+     *             declared for the callers' convenience; not thrown
+     */
     private ResultSet empty(final Object... _cols) throws SQLException {
         final List<ColumnInfo> cols = new ArrayList<ColumnInfo>();
         for (int i = 0; i < _cols.length; i += 2) {
@@ -83,6 +101,21 @@ public class Db2ShellDatabaseMetaData implements DatabaseMetaData {
 
     // =================================================================================== catalog queries
 
+    /**
+     * Lists tables from {@code SYSIBM.SQLTABLES}.
+     *
+     * @param _catalog
+     *            ignored; there is a single catalog
+     * @param _schemaPattern
+     *            schema search pattern, or null for all schemas
+     * @param _tablePattern
+     *            table name search pattern, or null for all tables
+     * @param _types
+     *            table types to include, or null for all types
+     * @return the matching tables, in the column layout required by {@link DatabaseMetaData#getTables}
+     * @throws SQLException
+     *             if the catalog query fails
+     */
     @Override
     public ResultSet getTables(final String _catalog, final String _schemaPattern, final String _tablePattern,
             final String[] _types) throws SQLException {
@@ -122,6 +155,22 @@ public class Db2ShellDatabaseMetaData implements DatabaseMetaData {
         return query("SELECT TABLE_TYPE FROM SYSIBM.SQLTABLETYPES ORDER BY TABLE_TYPE");
     }
 
+    /**
+     * Lists columns from {@code SYSIBM.SQLCOLUMNS}, joined to {@code QSYS2.SYSCOLUMNS} to report the
+     * {@code IS_AUTOINCREMENT} and {@code IS_GENERATEDCOLUMN} columns.
+     *
+     * @param _catalog
+     *            ignored; there is a single catalog
+     * @param _schemaPattern
+     *            schema search pattern, or null for all schemas
+     * @param _tablePattern
+     *            table name search pattern, or null for all tables
+     * @param _columnPattern
+     *            column name search pattern, or null for all columns
+     * @return the matching columns, in the column layout required by {@link DatabaseMetaData#getColumns}
+     * @throws SQLException
+     *             if the catalog query fails
+     */
     @Override
     public ResultSet getColumns(final String _catalog, final String _schemaPattern, final String _tablePattern,
             final String _columnPattern) throws SQLException {
@@ -175,6 +224,23 @@ public class Db2ShellDatabaseMetaData implements DatabaseMetaData {
                 + " ORDER BY FKTABLE_CAT, FKTABLE_SCHEM, FKTABLE_NAME, KEY_SEQ");
     }
 
+    /**
+     * Lists index and statistics information from {@code SYSIBM.SQLSTATISTICS}.
+     *
+     * @param _catalog
+     *            ignored; there is a single catalog
+     * @param _schema
+     *            exact schema name, or null for all schemas
+     * @param _table
+     *            exact table name, or null for all tables
+     * @param _unique
+     *            true to return only unique indexes
+     * @param _approximate
+     *            ignored
+     * @return the index information, in the column layout required by {@link DatabaseMetaData#getIndexInfo}
+     * @throws SQLException
+     *             if the catalog query fails
+     */
     @Override
     public ResultSet getIndexInfo(final String _catalog, final String _schema, final String _table,
             final boolean _unique, final boolean _approximate) throws SQLException {
@@ -210,6 +276,21 @@ public class Db2ShellDatabaseMetaData implements DatabaseMetaData {
                 + " ORDER BY PROCEDURE_CAT, PROCEDURE_SCHEM, PROCEDURE_NAME, SPECIFIC_NAME");
     }
 
+    /**
+     * Lists procedure parameters from {@code SYSIBM.SQLPROCEDURECOLS}.
+     *
+     * @param _catalog
+     *            ignored; there is a single catalog
+     * @param _schemaPattern
+     *            schema search pattern, or null for all schemas
+     * @param _procPattern
+     *            procedure name search pattern, or null for all procedures
+     * @param _columnPattern
+     *            parameter name search pattern, or null for all parameters
+     * @return the matching parameters, in the column layout required by {@link DatabaseMetaData#getProcedureColumns}
+     * @throws SQLException
+     *             if the catalog query fails
+     */
     @Override
     public ResultSet getProcedureColumns(final String _catalog, final String _schemaPattern,
             final String _procPattern, final String _columnPattern) throws SQLException {
@@ -231,6 +312,21 @@ public class Db2ShellDatabaseMetaData implements DatabaseMetaData {
                 + " ORDER BY FUNCTION_CAT, FUNCTION_SCHEM, FUNCTION_NAME, SPECIFIC_NAME");
     }
 
+    /**
+     * Lists function parameters and result columns from {@code SYSIBM.SQLFUNCTIONCOLS}.
+     *
+     * @param _catalog
+     *            ignored; there is a single catalog
+     * @param _schemaPattern
+     *            schema search pattern, or null for all schemas
+     * @param _funcPattern
+     *            function name search pattern, or null for all functions
+     * @param _columnPattern
+     *            parameter name search pattern, or null for all parameters
+     * @return the matching parameters, in the column layout required by {@link DatabaseMetaData#getFunctionColumns}
+     * @throws SQLException
+     *             if the catalog query fails
+     */
     @Override
     public ResultSet getFunctionColumns(final String _catalog, final String _schemaPattern,
             final String _funcPattern, final String _columnPattern) throws SQLException {
@@ -243,6 +339,13 @@ public class Db2ShellDatabaseMetaData implements DatabaseMetaData {
                 + " ORDER BY FUNCTION_CAT, FUNCTION_SCHEM, FUNCTION_NAME, SPECIFIC_NAME, ORDINAL_POSITION");
     }
 
+    /**
+     * Lists the SQL data types supported by the server, from {@code SYSIBM.SQLTYPEINFO}.
+     *
+     * @return the type information, in the column layout required by {@link DatabaseMetaData#getTypeInfo}
+     * @throws SQLException
+     *             if the catalog query fails
+     */
     @Override
     public ResultSet getTypeInfo() throws SQLException {
         return query("SELECT TYPE_NAME, JDBC_DATA_TYPE AS DATA_TYPE, COLUMN_SIZE AS PRECISION, LITERAL_PREFIX, "
@@ -252,6 +355,21 @@ public class Db2ShellDatabaseMetaData implements DatabaseMetaData {
                 + "ORDER BY JDBC_DATA_TYPE, TYPE_NAME");
     }
 
+    /**
+     * Lists user-defined types from {@code SYSIBM.SQLUDTS}.
+     *
+     * @param _catalog
+     *            ignored; there is a single catalog
+     * @param _schemaPattern
+     *            schema search pattern, or null for all schemas
+     * @param _typePattern
+     *            type name search pattern, or null for all types
+     * @param _types
+     *            {@code java.sql.Types} values to include, or null for all
+     * @return the matching types, in the column layout required by {@link DatabaseMetaData#getUDTs}
+     * @throws SQLException
+     *             if the catalog query fails
+     */
     @Override
     public ResultSet getUDTs(final String _catalog, final String _schemaPattern, final String _typePattern,
             final int[] _types) throws SQLException {
@@ -325,17 +443,17 @@ public class Db2ShellDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public String getURL() {
-        return connection.config().getUrl();
+        return m_connection.config().getUrl();
     }
 
     @Override
     public String getUserName() throws SQLException {
-        return info().user;
+        return info().getUser();
     }
 
     @Override
     public boolean isReadOnly() throws SQLException {
-        return connection.isReadOnly();
+        return m_connection.isReadOnly();
     }
 
     /** Same product name as IBM Toolbox for Java, so tools and ORMs pick the IBM i dialect. */
@@ -347,7 +465,7 @@ public class Db2ShellDatabaseMetaData implements DatabaseMetaData {
     @Override
     public String getDatabaseProductVersion() throws SQLException {
         final Engine.ServerInfo si = info();
-        return String.format("%02d.%02d.0000 V%dR%dm0", si.version, si.release, si.version, si.release);
+        return String.format("%02d.%02d.0000 V%dR%dm0", si.getVersion(), si.getRelease(), si.getVersion(), si.getRelease());
     }
 
     @Override
@@ -372,12 +490,12 @@ public class Db2ShellDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public int getDatabaseMajorVersion() throws SQLException {
-        return info().version;
+        return info().getVersion();
     }
 
     @Override
     public int getDatabaseMinorVersion() throws SQLException {
-        return info().release;
+        return info().getRelease();
     }
 
     @Override
@@ -392,29 +510,51 @@ public class Db2ShellDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public Connection getConnection() {
-        return connection;
+        return m_connection;
     }
 
     // =================================================================================== capabilities
 
-    @Override public boolean allProceduresAreCallable() { return false; }
-    @Override public boolean allTablesAreSelectable() { return false; }
-    @Override public boolean nullsAreSortedHigh() { return true; }
-    @Override public boolean nullsAreSortedLow() { return false; }
-    @Override public boolean nullsAreSortedAtStart() { return false; }
-    @Override public boolean nullsAreSortedAtEnd() { return false; }
-    @Override public boolean usesLocalFiles() { return false; }
-    @Override public boolean usesLocalFilePerTable() { return false; }
-    @Override public boolean supportsMixedCaseIdentifiers() { return false; }
-    @Override public boolean storesUpperCaseIdentifiers() { return true; }
-    @Override public boolean storesLowerCaseIdentifiers() { return false; }
-    @Override public boolean storesMixedCaseIdentifiers() { return false; }
-    @Override public boolean supportsMixedCaseQuotedIdentifiers() { return true; }
-    @Override public boolean storesUpperCaseQuotedIdentifiers() { return false; }
-    @Override public boolean storesLowerCaseQuotedIdentifiers() { return false; }
-    @Override public boolean storesMixedCaseQuotedIdentifiers() { return true; }
-    @Override public String getIdentifierQuoteString() { return "\""; }
+    @Override
+    public boolean allProceduresAreCallable() { return false; }
+    @Override
+    public boolean allTablesAreSelectable() { return false; }
+    @Override
+    public boolean nullsAreSortedHigh() { return true; }
+    @Override
+    public boolean nullsAreSortedLow() { return false; }
+    @Override
+    public boolean nullsAreSortedAtStart() { return false; }
+    @Override
+    public boolean nullsAreSortedAtEnd() { return false; }
+    @Override
+    public boolean usesLocalFiles() { return false; }
+    @Override
+    public boolean usesLocalFilePerTable() { return false; }
+    @Override
+    public boolean supportsMixedCaseIdentifiers() { return false; }
+    @Override
+    public boolean storesUpperCaseIdentifiers() { return true; }
+    @Override
+    public boolean storesLowerCaseIdentifiers() { return false; }
+    @Override
+    public boolean storesMixedCaseIdentifiers() { return false; }
+    @Override
+    public boolean supportsMixedCaseQuotedIdentifiers() { return true; }
+    @Override
+    public boolean storesUpperCaseQuotedIdentifiers() { return false; }
+    @Override
+    public boolean storesLowerCaseQuotedIdentifiers() { return false; }
+    @Override
+    public boolean storesMixedCaseQuotedIdentifiers() { return true; }
+    @Override
+    public String getIdentifierQuoteString() { return "\""; }
 
+    /**
+     * Db2 for i reserved words that are not SQL:2003 keywords.
+     *
+     * @return a comma-separated list of keywords
+     */
     @Override
     public String getSQLKeywords() {
         return "AFTER,ALIAS,ALLOW,APPLICATION,ASSOCIATE,ASUTIME,AUDIT,AUX,AUXILIARY,BEFORE,BINARY,BUFFERPOOL,CACHE,"
@@ -457,137 +597,245 @@ public class Db2ShellDatabaseMetaData implements DatabaseMetaData {
                 + "TIMESTAMPADD,TIMESTAMPDIFF,WEEK,YEAR";
     }
 
-    @Override public String getSearchStringEscape() { return "\\"; }
-    @Override public String getExtraNameCharacters() { return "@#$"; }
-    @Override public boolean supportsAlterTableWithAddColumn() { return true; }
-    @Override public boolean supportsAlterTableWithDropColumn() { return true; }
-    @Override public boolean supportsColumnAliasing() { return true; }
-    @Override public boolean nullPlusNonNullIsNull() { return true; }
-    @Override public boolean supportsConvert() { return false; }
-    @Override public boolean supportsConvert(final int _from, final int _to) { return false; }
-    @Override public boolean supportsTableCorrelationNames() { return true; }
-    @Override public boolean supportsDifferentTableCorrelationNames() { return false; }
-    @Override public boolean supportsExpressionsInOrderBy() { return true; }
-    @Override public boolean supportsOrderByUnrelated() { return true; }
-    @Override public boolean supportsGroupBy() { return true; }
-    @Override public boolean supportsGroupByUnrelated() { return true; }
-    @Override public boolean supportsGroupByBeyondSelect() { return true; }
-    @Override public boolean supportsLikeEscapeClause() { return true; }
-    @Override public boolean supportsMultipleResultSets() { return false; }
-    @Override public boolean supportsMultipleTransactions() { return true; }
-    @Override public boolean supportsNonNullableColumns() { return true; }
-    @Override public boolean supportsMinimumSQLGrammar() { return true; }
-    @Override public boolean supportsCoreSQLGrammar() { return true; }
-    @Override public boolean supportsExtendedSQLGrammar() { return false; }
-    @Override public boolean supportsANSI92EntryLevelSQL() { return true; }
-    @Override public boolean supportsANSI92IntermediateSQL() { return false; }
-    @Override public boolean supportsANSI92FullSQL() { return false; }
-    @Override public boolean supportsIntegrityEnhancementFacility() { return true; }
-    @Override public boolean supportsOuterJoins() { return true; }
-    @Override public boolean supportsFullOuterJoins() { return true; }
-    @Override public boolean supportsLimitedOuterJoins() { return true; }
-    @Override public String getSchemaTerm() { return "schema"; }
-    @Override public String getProcedureTerm() { return "procedure"; }
-    @Override public String getCatalogTerm() { return "database"; }
-    @Override public boolean isCatalogAtStart() { return true; }
-    @Override public String getCatalogSeparator() { return "."; }
-    @Override public boolean supportsSchemasInDataManipulation() { return true; }
-    @Override public boolean supportsSchemasInProcedureCalls() { return true; }
-    @Override public boolean supportsSchemasInTableDefinitions() { return true; }
-    @Override public boolean supportsSchemasInIndexDefinitions() { return true; }
-    @Override public boolean supportsSchemasInPrivilegeDefinitions() { return true; }
-    @Override public boolean supportsCatalogsInDataManipulation() { return false; }
-    @Override public boolean supportsCatalogsInProcedureCalls() { return false; }
-    @Override public boolean supportsCatalogsInTableDefinitions() { return false; }
-    @Override public boolean supportsCatalogsInIndexDefinitions() { return false; }
-    @Override public boolean supportsCatalogsInPrivilegeDefinitions() { return false; }
-    @Override public boolean supportsPositionedDelete() { return false; }
-    @Override public boolean supportsPositionedUpdate() { return false; }
-    @Override public boolean supportsSelectForUpdate() { return false; }
-    @Override public boolean supportsStoredProcedures() { return true; }
-    @Override public boolean supportsSubqueriesInComparisons() { return true; }
-    @Override public boolean supportsSubqueriesInExists() { return true; }
-    @Override public boolean supportsSubqueriesInIns() { return true; }
-    @Override public boolean supportsSubqueriesInQuantifieds() { return true; }
-    @Override public boolean supportsCorrelatedSubqueries() { return true; }
-    @Override public boolean supportsUnion() { return true; }
-    @Override public boolean supportsUnionAll() { return true; }
-    @Override public boolean supportsOpenCursorsAcrossCommit() { return true; }
-    @Override public boolean supportsOpenCursorsAcrossRollback() { return true; }
-    @Override public boolean supportsOpenStatementsAcrossCommit() { return true; }
-    @Override public boolean supportsOpenStatementsAcrossRollback() { return true; }
-    @Override public int getMaxBinaryLiteralLength() { return 32739; }
-    @Override public int getMaxCharLiteralLength() { return 32739; }
-    @Override public int getMaxColumnNameLength() { return 128; }
-    @Override public int getMaxColumnsInGroupBy() { return 8000; }
-    @Override public int getMaxColumnsInIndex() { return 120; }
-    @Override public int getMaxColumnsInOrderBy() { return 10000; }
-    @Override public int getMaxColumnsInSelect() { return 8000; }
-    @Override public int getMaxColumnsInTable() { return 8000; }
-    @Override public int getMaxConnections() { return 0; }
-    @Override public int getMaxCursorNameLength() { return 128; }
-    @Override public int getMaxIndexLength() { return 32767; }
-    @Override public int getMaxSchemaNameLength() { return 128; }
-    @Override public int getMaxProcedureNameLength() { return 128; }
-    @Override public int getMaxCatalogNameLength() { return 18; }
-    @Override public int getMaxRowSize() { return 32766; }
-    @Override public boolean doesMaxRowSizeIncludeBlobs() { return false; }
-    @Override public int getMaxStatementLength() { return 2097152; }
-    @Override public int getMaxStatements() { return 0; }
-    @Override public int getMaxTableNameLength() { return 128; }
-    @Override public int getMaxTablesInSelect() { return 1000; }
-    @Override public int getMaxUserNameLength() { return 10; }
+    @Override
+    public String getSearchStringEscape() { return "\\"; }
+    @Override
+    public String getExtraNameCharacters() { return "@#$"; }
+    @Override
+    public boolean supportsAlterTableWithAddColumn() { return true; }
+    @Override
+    public boolean supportsAlterTableWithDropColumn() { return true; }
+    @Override
+    public boolean supportsColumnAliasing() { return true; }
+    @Override
+    public boolean nullPlusNonNullIsNull() { return true; }
+    @Override
+    public boolean supportsConvert() { return false; }
+    @Override
+    public boolean supportsConvert(final int _from, final int _to) { return false; }
+    @Override
+    public boolean supportsTableCorrelationNames() { return true; }
+    @Override
+    public boolean supportsDifferentTableCorrelationNames() { return false; }
+    @Override
+    public boolean supportsExpressionsInOrderBy() { return true; }
+    @Override
+    public boolean supportsOrderByUnrelated() { return true; }
+    @Override
+    public boolean supportsGroupBy() { return true; }
+    @Override
+    public boolean supportsGroupByUnrelated() { return true; }
+    @Override
+    public boolean supportsGroupByBeyondSelect() { return true; }
+    @Override
+    public boolean supportsLikeEscapeClause() { return true; }
+    @Override
+    public boolean supportsMultipleResultSets() { return false; }
+    @Override
+    public boolean supportsMultipleTransactions() { return true; }
+    @Override
+    public boolean supportsNonNullableColumns() { return true; }
+    @Override
+    public boolean supportsMinimumSQLGrammar() { return true; }
+    @Override
+    public boolean supportsCoreSQLGrammar() { return true; }
+    @Override
+    public boolean supportsExtendedSQLGrammar() { return false; }
+    @Override
+    public boolean supportsANSI92EntryLevelSQL() { return true; }
+    @Override
+    public boolean supportsANSI92IntermediateSQL() { return false; }
+    @Override
+    public boolean supportsANSI92FullSQL() { return false; }
+    @Override
+    public boolean supportsIntegrityEnhancementFacility() { return true; }
+    @Override
+    public boolean supportsOuterJoins() { return true; }
+    @Override
+    public boolean supportsFullOuterJoins() { return true; }
+    @Override
+    public boolean supportsLimitedOuterJoins() { return true; }
+    @Override
+    public String getSchemaTerm() { return "schema"; }
+    @Override
+    public String getProcedureTerm() { return "procedure"; }
+    @Override
+    public String getCatalogTerm() { return "database"; }
+    @Override
+    public boolean isCatalogAtStart() { return true; }
+    @Override
+    public String getCatalogSeparator() { return "."; }
+    @Override
+    public boolean supportsSchemasInDataManipulation() { return true; }
+    @Override
+    public boolean supportsSchemasInProcedureCalls() { return true; }
+    @Override
+    public boolean supportsSchemasInTableDefinitions() { return true; }
+    @Override
+    public boolean supportsSchemasInIndexDefinitions() { return true; }
+    @Override
+    public boolean supportsSchemasInPrivilegeDefinitions() { return true; }
+    @Override
+    public boolean supportsCatalogsInDataManipulation() { return false; }
+    @Override
+    public boolean supportsCatalogsInProcedureCalls() { return false; }
+    @Override
+    public boolean supportsCatalogsInTableDefinitions() { return false; }
+    @Override
+    public boolean supportsCatalogsInIndexDefinitions() { return false; }
+    @Override
+    public boolean supportsCatalogsInPrivilegeDefinitions() { return false; }
+    @Override
+    public boolean supportsPositionedDelete() { return false; }
+    @Override
+    public boolean supportsPositionedUpdate() { return false; }
+    @Override
+    public boolean supportsSelectForUpdate() { return false; }
+    @Override
+    public boolean supportsStoredProcedures() { return true; }
+    @Override
+    public boolean supportsSubqueriesInComparisons() { return true; }
+    @Override
+    public boolean supportsSubqueriesInExists() { return true; }
+    @Override
+    public boolean supportsSubqueriesInIns() { return true; }
+    @Override
+    public boolean supportsSubqueriesInQuantifieds() { return true; }
+    @Override
+    public boolean supportsCorrelatedSubqueries() { return true; }
+    @Override
+    public boolean supportsUnion() { return true; }
+    @Override
+    public boolean supportsUnionAll() { return true; }
+    @Override
+    public boolean supportsOpenCursorsAcrossCommit() { return true; }
+    @Override
+    public boolean supportsOpenCursorsAcrossRollback() { return true; }
+    @Override
+    public boolean supportsOpenStatementsAcrossCommit() { return true; }
+    @Override
+    public boolean supportsOpenStatementsAcrossRollback() { return true; }
+    @Override
+    public int getMaxBinaryLiteralLength() { return 32739; }
+    @Override
+    public int getMaxCharLiteralLength() { return 32739; }
+    @Override
+    public int getMaxColumnNameLength() { return 128; }
+    @Override
+    public int getMaxColumnsInGroupBy() { return 8000; }
+    @Override
+    public int getMaxColumnsInIndex() { return 120; }
+    @Override
+    public int getMaxColumnsInOrderBy() { return 10000; }
+    @Override
+    public int getMaxColumnsInSelect() { return 8000; }
+    @Override
+    public int getMaxColumnsInTable() { return 8000; }
+    @Override
+    public int getMaxConnections() { return 0; }
+    @Override
+    public int getMaxCursorNameLength() { return 128; }
+    @Override
+    public int getMaxIndexLength() { return 32767; }
+    @Override
+    public int getMaxSchemaNameLength() { return 128; }
+    @Override
+    public int getMaxProcedureNameLength() { return 128; }
+    @Override
+    public int getMaxCatalogNameLength() { return 18; }
+    @Override
+    public int getMaxRowSize() { return 32766; }
+    @Override
+    public boolean doesMaxRowSizeIncludeBlobs() { return false; }
+    @Override
+    public int getMaxStatementLength() { return 2097152; }
+    @Override
+    public int getMaxStatements() { return 0; }
+    @Override
+    public int getMaxTableNameLength() { return 128; }
+    @Override
+    public int getMaxTablesInSelect() { return 1000; }
+    @Override
+    public int getMaxUserNameLength() { return 10; }
 
     @Override
     public int getDefaultTransactionIsolation() {
-        return connection.config().getIsolation();
+        return m_connection.config().getIsolation();
     }
 
-    @Override public boolean supportsTransactions() { return true; }
-    @Override public boolean supportsTransactionIsolationLevel(final int _level) { return true; }
-    @Override public boolean supportsDataDefinitionAndDataManipulationTransactions() { return true; }
-    @Override public boolean supportsDataManipulationTransactionsOnly() { return false; }
-    @Override public boolean dataDefinitionCausesTransactionCommit() { return false; }
-    @Override public boolean dataDefinitionIgnoredInTransactions() { return false; }
+    @Override
+    public boolean supportsTransactions() { return true; }
+    @Override
+    public boolean supportsTransactionIsolationLevel(final int _level) { return true; }
+    @Override
+    public boolean supportsDataDefinitionAndDataManipulationTransactions() { return true; }
+    @Override
+    public boolean supportsDataManipulationTransactionsOnly() { return false; }
+    @Override
+    public boolean dataDefinitionCausesTransactionCommit() { return false; }
+    @Override
+    public boolean dataDefinitionIgnoredInTransactions() { return false; }
 
     @Override
     public boolean supportsResultSetType(final int _type) {
-        return _type == ResultSet.TYPE_FORWARD_ONLY || _type == ResultSet.TYPE_SCROLL_INSENSITIVE;
+        return ResultSet.TYPE_FORWARD_ONLY == _type || ResultSet.TYPE_SCROLL_INSENSITIVE == _type;
     }
 
     @Override
     public boolean supportsResultSetConcurrency(final int _type, final int _concurrency) {
-        return supportsResultSetType(_type) && _concurrency == ResultSet.CONCUR_READ_ONLY;
+        return supportsResultSetType(_type) && ResultSet.CONCUR_READ_ONLY == _concurrency;
     }
 
-    @Override public boolean ownUpdatesAreVisible(final int _type) { return false; }
-    @Override public boolean ownDeletesAreVisible(final int _type) { return false; }
-    @Override public boolean ownInsertsAreVisible(final int _type) { return false; }
-    @Override public boolean othersUpdatesAreVisible(final int _type) { return false; }
-    @Override public boolean othersDeletesAreVisible(final int _type) { return false; }
-    @Override public boolean othersInsertsAreVisible(final int _type) { return false; }
-    @Override public boolean updatesAreDetected(final int _type) { return false; }
-    @Override public boolean deletesAreDetected(final int _type) { return false; }
-    @Override public boolean insertsAreDetected(final int _type) { return false; }
-    @Override public boolean supportsBatchUpdates() { return true; }
-    @Override public boolean supportsSavepoints() { return true; }
-    @Override public boolean supportsNamedParameters() { return false; }
-    @Override public boolean supportsMultipleOpenResults() { return false; }
-    @Override public boolean supportsGetGeneratedKeys() { return true; }
+    @Override
+    public boolean ownUpdatesAreVisible(final int _type) { return false; }
+    @Override
+    public boolean ownDeletesAreVisible(final int _type) { return false; }
+    @Override
+    public boolean ownInsertsAreVisible(final int _type) { return false; }
+    @Override
+    public boolean othersUpdatesAreVisible(final int _type) { return false; }
+    @Override
+    public boolean othersDeletesAreVisible(final int _type) { return false; }
+    @Override
+    public boolean othersInsertsAreVisible(final int _type) { return false; }
+    @Override
+    public boolean updatesAreDetected(final int _type) { return false; }
+    @Override
+    public boolean deletesAreDetected(final int _type) { return false; }
+    @Override
+    public boolean insertsAreDetected(final int _type) { return false; }
+    @Override
+    public boolean supportsBatchUpdates() { return true; }
+    @Override
+    public boolean supportsSavepoints() { return true; }
+    @Override
+    public boolean supportsNamedParameters() { return false; }
+    @Override
+    public boolean supportsMultipleOpenResults() { return false; }
+    @Override
+    public boolean supportsGetGeneratedKeys() { return true; }
 
     @Override
     public boolean supportsResultSetHoldability(final int _holdability) {
-        return _holdability == ResultSet.HOLD_CURSORS_OVER_COMMIT;
+        return ResultSet.HOLD_CURSORS_OVER_COMMIT == _holdability;
     }
 
-    @Override public int getResultSetHoldability() { return ResultSet.HOLD_CURSORS_OVER_COMMIT; }
-    @Override public int getSQLStateType() { return sqlStateSQL; }
-    @Override public boolean locatorsUpdateCopy() { return true; }
-    @Override public boolean supportsStatementPooling() { return false; }
-    @Override public RowIdLifetime getRowIdLifetime() { return RowIdLifetime.ROWID_UNSUPPORTED; }
-    @Override public boolean supportsStoredFunctionsUsingCallSyntax() { return true; }
-    @Override public boolean autoCommitFailureClosesAllResultSets() { return false; }
-    @Override public boolean generatedKeyAlwaysReturned() { return false; }
+    @Override
+    public int getResultSetHoldability() { return ResultSet.HOLD_CURSORS_OVER_COMMIT; }
+    @Override
+    public int getSQLStateType() { return sqlStateSQL; }
+    @Override
+    public boolean locatorsUpdateCopy() { return true; }
+    @Override
+    public boolean supportsStatementPooling() { return false; }
+    @Override
+    public RowIdLifetime getRowIdLifetime() { return RowIdLifetime.ROWID_UNSUPPORTED; }
+    @Override
+    public boolean supportsStoredFunctionsUsingCallSyntax() { return true; }
+    @Override
+    public boolean autoCommitFailureClosesAllResultSets() { return false; }
+    @Override
+    public boolean generatedKeyAlwaysReturned() { return false; }
 
     @Override
     public <T> T unwrap(final Class<T> _iface) throws SQLException {

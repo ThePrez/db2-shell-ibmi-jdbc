@@ -1,0 +1,7 @@
+# Source files always use LF line endings, regardless of platform (see coding conventions section 1.1)
+* text=auto eol=lf
+*.java text eol=lf
+*.xml text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+*.jar binary

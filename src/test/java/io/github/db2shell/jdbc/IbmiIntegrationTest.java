@@ -45,37 +45,50 @@ import org.junit.jupiter.api.TestMethodOrder;
 @TestMethodOrder(MethodOrderer.MethodName.class)
 class IbmiIntegrationTest {
 
-    private static Connection conn;
-    private static String schema;
+    private static Connection s_conn;
+    private static String s_schema;
 
+    /**
+     * Opens the shared connection and creates the scratch schema. Skips the whole class unless running on IBM i.
+     *
+     * @throws Exception
+     *             if the driver cannot be loaded, the connection fails, or the schema cannot be created
+     */
     @BeforeAll
     static void setUp() throws Exception {
         assumeTrue("OS/400".equals(System.getProperty("os.name")), "IBM i only");
         // the JUnit console's class loader is not scanned by DriverManager's ServiceLoader on Java 8
         Class.forName(Db2ShellDriver.class.getName());
-        conn = DriverManager.getConnection("jdbc:db2shell:");
-        schema = "DB2SH" + Long.toString(System.nanoTime() % 100000L, 36).toUpperCase();
-        try (Statement s = conn.createStatement()) {
-            s.execute("CREATE SCHEMA " + schema);
+        s_conn = DriverManager.getConnection("jdbc:db2shell:");
+        s_schema = "DB2SH" + Long.toString(System.nanoTime() % 100000L, 36).toUpperCase();
+        try (final Statement s = s_conn.createStatement()) {
+            s.execute("CREATE SCHEMA " + s_schema);
         }
     }
 
+    /**
+     * Drops the scratch schema and closes the shared connection. A failure to drop the schema is reported to
+     * stderr but does not fail the run.
+     *
+     * @throws SQLException
+     *             if closing the shared connection fails
+     */
     @AfterAll
     static void tearDown() throws SQLException {
-        if (null == conn) {
+        if (null == s_conn) {
             return;
         }
-        try (Statement s = conn.createStatement()) {
-            conn.setAutoCommit(true);
-            s.execute("DROP SCHEMA " + schema + " CASCADE");
+        try (final Statement s = s_conn.createStatement()) {
+            s_conn.setAutoCommit(true);
+            s.execute("DROP SCHEMA " + s_schema + " CASCADE");
         } catch (final SQLException e) {
-            System.err.println("could not drop " + schema + ": " + e);
+            System.err.println("could not drop " + s_schema + ": " + e);
         }
-        conn.close();
+        s_conn.close();
     }
 
     private static Statement st() throws SQLException {
-        return conn.createStatement();
+        return s_conn.createStatement();
     }
 
     private static Connection open(final String _props) throws SQLException {
@@ -84,9 +97,16 @@ class IbmiIntegrationTest {
 
     // =================================================================================== basics
 
+    /**
+     * Verifies a simple query: result set metadata (names, labels, types, nullability) and reading values,
+     * including NULL.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void a01_simpleQueryAndMetadata() throws SQLException {
-        try (ResultSet rs = st().executeQuery("select 1 as a, cast(null as int) as \"my col\", 'hello' c "
+        try (final ResultSet rs = st().executeQuery("select 1 as a, cast(null as int) as \"my col\", 'hello' c "
                 + "from sysibm.sysdummy1")) {
             final ResultSetMetaData md = rs.getMetaData();
             assertEquals(3, md.getColumnCount());
@@ -103,6 +123,13 @@ class IbmiIntegrationTest {
         }
     }
 
+    /**
+     * Verifies that values of each supported SQL data type are returned with the expected Java value and JDBC
+     * type.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void a02_dataTypes() throws SQLException {
         final String sql = "select cast('ab' as char(4)) ch, cast('ab ' as varchar(10)) vc, "
@@ -116,7 +143,7 @@ class IbmiIntegrationTest {
                 + "cast('clob text' as clob(1k)) cl, cast(x'0102' as blob(1k)) bl, "
                 + "xmlparse(document '<a>x</a>') xm, true bo, false bf, cast(null as boolean) bn "
                 + "from sysibm.sysdummy1";
-        try (ResultSet rs = st().executeQuery(sql)) {
+        try (final ResultSet rs = st().executeQuery(sql)) {
             final ResultSetMetaData md = rs.getMetaData();
             assertTrue(rs.next());
             assertEquals("ab  ", rs.getString("CH"));
@@ -155,9 +182,16 @@ class IbmiIntegrationTest {
         }
     }
 
+    /**
+     * Verifies string values that resemble the utility's own output markers: a lone dash, NULL, embedded
+     * newlines, empty and blank strings, the statement terminator, quotes and the prompt text.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void a03_tricksyStrings() throws SQLException {
-        try (ResultSet rs = st().executeQuery("values ('-', cast(null as varchar(5)), 'a' concat x'25' concat 'b', "
+        try (final ResultSet rs = st().executeQuery("values ('-', cast(null as varchar(5)), 'a' concat x'25' concat 'b', "
                 + "'', '   ', 'x%y', 'it''s', 'DB2>')")) {
             assertTrue(rs.next());
             assertEquals("-", rs.getString(1));
@@ -171,18 +205,32 @@ class IbmiIntegrationTest {
         }
     }
 
+    /**
+     * Verifies that statements containing comments, newlines inside literals and a trailing semicolon run
+     * correctly.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void a04_newlineLiteralsAndComments() throws SQLException {
-        try (ResultSet rs = st().executeQuery("select -- a comment\n 'line1\nline2' as v /* block */\n"
+        try (final ResultSet rs = st().executeQuery("select -- a comment\n 'line1\nline2' as v /* block */\n"
                 + "from sysibm.sysdummy1;")) {
             assertTrue(rs.next());
             assertEquals("line1\nline2", rs.getString(1));
         }
     }
 
+    /**
+     * Verifies that rows much wider than an output line, including large CLOB and BLOB values, are read back
+     * completely.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void a05_wideRowsAndLobs() throws SQLException {
-        try (ResultSet rs = st().executeQuery("select repeat('x', 10000) a, cast(repeat('y', 30000) as varchar(30000)) b, "
+        try (final ResultSet rs = st().executeQuery("select repeat('x', 10000) a, cast(repeat('y', 30000) as varchar(30000)) b, "
                 + "repeat(cast('z' as clob(200k)), 100000) c, repeat(cast(x'AB' as blob(100k)), 50000) d, "
                 + "cast(repeat('w', 20000) as varchar(20000)) e from sysibm.sysdummy1")) {
             assertTrue(rs.next());
@@ -197,55 +245,76 @@ class IbmiIntegrationTest {
         }
     }
 
+    /**
+     * Verifies that characters outside the job CCSID round trip in unicode mode, and that characters inside
+     * it survive without unicode mode.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void a06_unicode() throws SQLException {
-        final String euro = "€ é 中文";
+        final String euro = "\u20ac \u00e9 \u4e2d\u6587";
         // literals the job CCSID cannot represent are sent as UTF-16; values round trip in unicode mode
-        try (Connection c = open(";unicode=true"); PreparedStatement ps = c.prepareStatement(
+        try (final Connection c = open(";unicode=true"); final PreparedStatement ps = c.prepareStatement(
                 "select cast(? as vargraphic(20) ccsid 1200) a, cast('" + euro + "' as nvarchar(20)) b "
                         + "from sysibm.sysdummy1")) {
             ps.setString(1, euro);
-            try (ResultSet rs = ps.executeQuery()) {
+            try (final ResultSet rs = ps.executeQuery()) {
                 assertTrue(rs.next());
                 assertEquals(euro, rs.getString(1));
                 assertEquals(euro, rs.getString(2));
             }
         }
         // without unicode mode, characters outside the job CCSID are substituted, but others survive
-        try (ResultSet rs = st().executeQuery("values cast('été' as nvarchar(10))")) {
+        try (final ResultSet rs = st().executeQuery("values cast('\u00e9t\u00e9' as nvarchar(10))")) {
             assertTrue(rs.next());
-            assertEquals("été", rs.getString(1));
+            assertEquals("\u00e9t\u00e9", rs.getString(1));
         }
     }
 
+    /**
+     * Verifies queries of various shapes: CTEs, isolation clauses, parenthesized unions with FETCH FIRST, empty
+     * results and JDBC escapes.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void a07_queryShapes() throws SQLException {
-        try (ResultSet rs = st().executeQuery("with c(n) as (values 3, 1, 2) select n from c order by n desc")) {
+        try (final ResultSet rs = st().executeQuery("with c(n) as (values 3, 1, 2) select n from c order by n desc")) {
             assertTrue(rs.next());
             assertEquals(3, rs.getInt(1));
             assertTrue(rs.next());
             assertEquals(2, rs.getInt(1));
         }
-        try (ResultSet rs = st().executeQuery("select ibmreqd from sysibm.sysdummy1 with ur")) {
+        try (final ResultSet rs = st().executeQuery("select ibmreqd from sysibm.sysdummy1 with ur")) {
             assertTrue(rs.next());
             assertEquals("Y", rs.getString(1));
         }
-        try (ResultSet rs = st().executeQuery("(select 1 from sysibm.sysdummy1) union all (select 2 from sysibm.sysdummy1)"
+        try (final ResultSet rs = st().executeQuery("(select 1 from sysibm.sysdummy1) union all (select 2 from sysibm.sysdummy1)"
                 + " order by 1 fetch first 1 rows only")) {
             assertTrue(rs.next());
             assertFalse(rs.next());
         }
-        try (ResultSet rs = st().executeQuery("select * from sysibm.sysdummy1 where 1 = 0")) {
+        try (final ResultSet rs = st().executeQuery("select * from sysibm.sysdummy1 where 1 = 0")) {
             assertFalse(rs.next());
             assertEquals(1, rs.getMetaData().getColumnCount());
         }
-        try (ResultSet rs = st().executeQuery("select {fn ucase('abc')}, {d '2024-01-02'} from sysibm.sysdummy1")) {
+        try (final ResultSet rs = st().executeQuery("select {fn ucase('abc')}, {d '2024-01-02'} from sysibm.sysdummy1")) {
             assertTrue(rs.next());
             assertEquals("ABC", rs.getString(1));
             assertEquals(Date.valueOf("2024-01-02"), rs.getDate(2));
         }
     }
 
+    /**
+     * Verifies that statements and parameter values longer than the utility's input line limit are split and
+     * executed correctly.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void a08_longStatement() throws SQLException {
         // well over the utility's ~32K input line limit: the driver splits the statement across input lines
@@ -260,26 +329,32 @@ class IbmiIntegrationTest {
         }
         sb.append(")");
         assertTrue(sb.length() > 70000);
-        try (ResultSet rs = st().executeQuery(sb.toString())) {
+        try (final ResultSet rs = st().executeQuery(sb.toString())) {
             assertTrue(rs.next());
             assertEquals(60000, rs.getInt(1));
             assertEquals(1, rs.getInt(2));
         }
-        try (PreparedStatement ps = conn.prepareStatement("values cast(? as clob(1m))")) {
+        try (final PreparedStatement ps = s_conn.prepareStatement("values cast(? as clob(1m))")) {
             ps.setString(1, lit.toString() + lit);
-            try (ResultSet rs = ps.executeQuery()) {
+            try (final ResultSet rs = ps.executeQuery()) {
                 assertTrue(rs.next());
                 assertEquals(lit.toString() + lit, rs.getString(1));
             }
         }
     }
 
+    /**
+     * Verifies that a large result is read completely and correctly, and prints the elapsed time.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void a09_manyRows() throws SQLException {
         final long t0 = System.currentTimeMillis();
         int n = 0;
         long sum = 0;
-        try (ResultSet rs = st().executeQuery("with r(k) as (values 1 union all select k + 1 from r where k < 20000) "
+        try (final ResultSet rs = st().executeQuery("with r(k) as (values 1 union all select k + 1 from r where k < 20000) "
                 + "select k, 'name ' concat k, current date from r")) {
             while (rs.next()) {
                 n++;
@@ -293,6 +368,13 @@ class IbmiIntegrationTest {
 
     // =================================================================================== errors
 
+    /**
+     * Verifies that SQL errors map to the right SQLException subclasses, SQLSTATEs and error codes, how errors
+     * raised while fetching are reported, and that the connection stays usable afterwards.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void b01_errors() throws SQLException {
         final SQLException e1 = assertThrows(SQLSyntaxErrorException.class, () -> st().executeQuery("selec 1"));
@@ -303,7 +385,7 @@ class IbmiIntegrationTest {
         assertEquals(-204, e2.getErrorCode());
         // errors raised while fetching
         // the utility does not report fetch-time mapping errors; the row comes back as NULLs with a warning
-        try (ResultSet rs = st().executeQuery("select x, 10 / (x - 2) from (values 4, 3, 2, 1) t(x)")) {
+        try (final ResultSet rs = st().executeQuery("select x, 10 / (x - 2) from (values 4, 3, 2, 1) t(x)")) {
             assertTrue(rs.next());
             assertEquals(5, rs.getInt(2));
             assertTrue(rs.next());
@@ -318,14 +400,14 @@ class IbmiIntegrationTest {
             assertEquals("01519", rs.getWarnings().getSQLState());
         }
         // errors raised while fetching are reported
-        try (ResultSet rs = st().executeQuery("select cast(raise_error('70001', 'boom') as int) from (values 1, 2) t(x)")) {
+        try (final ResultSet rs = st().executeQuery("select cast(raise_error('70001', 'boom') as int) from (values 1, 2) t(x)")) {
             final SQLException e3 = assertThrows(SQLException.class, rs::next);
             assertEquals("70001", e3.getSQLState());
         } catch (final SQLException e) {
             assertEquals("70001", e.getSQLState());
         }
         // still usable afterwards
-        try (ResultSet rs = st().executeQuery("values 42")) {
+        try (final ResultSet rs = st().executeQuery("values 42")) {
             assertTrue(rs.next());
             assertEquals(42, rs.getInt(1));
         }
@@ -333,16 +415,23 @@ class IbmiIntegrationTest {
 
     // =================================================================================== updates
 
+    /**
+     * Verifies update counts for INSERT, UPDATE and DELETE, prepared statement parameters of several types
+     * including NULLs, and that a constraint violation raises SQLIntegrityConstraintViolationException.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void c01_updateCountsAndPrepared() throws SQLException {
         final Statement s = st();
-        s.execute("create table " + schema + ".t1 (id int not null primary key, name varchar(50), "
+        s.execute("create table " + s_schema + ".t1 (id int not null primary key, name varchar(50), "
                 + "amt decimal(11,2), ts timestamp, bin varbinary(20), flag boolean, d date)");
-        assertEquals(3, s.executeUpdate("insert into " + schema + ".t1 (id, name) values (1, 'a'), (2, 'b'), (3, 'c')"));
-        assertEquals(2, s.executeUpdate("update " + schema + ".t1 set name = 'z' where id >= 2"));
-        assertEquals(0, s.executeUpdate("update " + schema + ".t1 set name = 'q' where id > 100"));
-        assertEquals(1, s.executeUpdate("delete from " + schema + ".t1 where id = 1"));
-        try (PreparedStatement ps = conn.prepareStatement("insert into " + schema + ".t1 values (?, ?, ?, ?, ?, ?, ?)")) {
+        assertEquals(3, s.executeUpdate("insert into " + s_schema + ".t1 (id, name) values (1, 'a'), (2, 'b'), (3, 'c')"));
+        assertEquals(2, s.executeUpdate("update " + s_schema + ".t1 set name = 'z' where id >= 2"));
+        assertEquals(0, s.executeUpdate("update " + s_schema + ".t1 set name = 'q' where id > 100"));
+        assertEquals(1, s.executeUpdate("delete from " + s_schema + ".t1 where id = 1"));
+        try (final PreparedStatement ps = s_conn.prepareStatement("insert into " + s_schema + ".t1 values (?, ?, ?, ?, ?, ?, ?)")) {
             ps.setInt(1, 10);
             ps.setString(2, "O'Brien\nline2 50%");
             ps.setBigDecimal(3, new BigDecimal("-12345.67"));
@@ -360,9 +449,9 @@ class IbmiIntegrationTest {
             ps.setObject(7, java.time.LocalDate.of(2000, 1, 1));
             assertEquals(1, ps.executeUpdate());
         }
-        try (PreparedStatement ps = conn.prepareStatement("select * from " + schema + ".t1 where id = ?")) {
+        try (final PreparedStatement ps = s_conn.prepareStatement("select * from " + s_schema + ".t1 where id = ?")) {
             ps.setInt(1, 10);
-            try (ResultSet rs = ps.executeQuery()) {
+            try (final ResultSet rs = ps.executeQuery()) {
                 assertTrue(rs.next());
                 assertEquals("O'Brien\nline2 50%", rs.getString("NAME"));
                 assertEquals(new BigDecimal("-12345.67"), rs.getBigDecimal("AMT"));
@@ -372,7 +461,7 @@ class IbmiIntegrationTest {
                 assertEquals(Date.valueOf("1999-12-31"), rs.getDate("D"));
             }
             ps.setInt(1, 11);
-            try (ResultSet rs = ps.executeQuery()) {
+            try (final ResultSet rs = ps.executeQuery()) {
                 assertTrue(rs.next());
                 assertNull(rs.getString("NAME"));
                 assertNull(rs.getObject("FLAG"));
@@ -380,14 +469,21 @@ class IbmiIntegrationTest {
             }
         }
         assertThrows(SQLIntegrityConstraintViolationException.class,
-                () -> s.executeUpdate("insert into " + schema + ".t1 (id) values 10"));
+                () -> s.executeUpdate("insert into " + s_schema + ".t1 (id) values 10"));
     }
 
+    /**
+     * Verifies prepared and plain statement batches, including the partial update counts reported when a
+     * batch entry fails.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void c02_batch() throws SQLException {
         final Statement s = st();
-        s.execute("create table " + schema + ".t2 (id int not null primary key)");
-        try (PreparedStatement ps = conn.prepareStatement("insert into " + schema + ".t2 values ?")) {
+        s.execute("create table " + s_schema + ".t2 (id int not null primary key)");
+        try (final PreparedStatement ps = s_conn.prepareStatement("insert into " + s_schema + ".t2 values ?")) {
             for (int i = 0; i < 5; i++) {
                 ps.setInt(1, i);
                 ps.addBatch();
@@ -400,28 +496,34 @@ class IbmiIntegrationTest {
             final BatchUpdateException bue = assertThrows(BatchUpdateException.class, ps::executeBatch);
             assertEquals(1, bue.getUpdateCounts().length);
         }
-        s.addBatch("insert into " + schema + ".t2 values 200");
-        s.addBatch("delete from " + schema + ".t2 where id < 3");
+        s.addBatch("insert into " + s_schema + ".t2 values 200");
+        s.addBatch("delete from " + s_schema + ".t2 where id < 3");
         assertArrayEquals(new int[] { 1, 3 }, s.executeBatch());
     }
 
+    /**
+     * Verifies retrieval of generated identity keys for plain and prepared statements.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void c03_generatedKeys() throws SQLException {
         final Statement s = st();
-        s.execute("create table " + schema + ".gk (id int generated always as identity, name varchar(10))");
-        assertEquals(2, s.executeUpdate("insert into " + schema + ".gk (name) values ('a'), ('b')",
+        s.execute("create table " + s_schema + ".gk (id int generated always as identity, name varchar(10))");
+        assertEquals(2, s.executeUpdate("insert into " + s_schema + ".gk (name) values ('a'), ('b')",
                 Statement.RETURN_GENERATED_KEYS));
-        try (ResultSet keys = s.getGeneratedKeys()) {
+        try (final ResultSet keys = s.getGeneratedKeys()) {
             assertTrue(keys.next());
             assertEquals(1, keys.getInt(1));
             assertTrue(keys.next());
             assertEquals(2, keys.getInt(1));
         }
-        try (PreparedStatement ps = conn.prepareStatement("insert into " + schema + ".gk (name) values (?)",
+        try (final PreparedStatement ps = s_conn.prepareStatement("insert into " + s_schema + ".gk (name) values (?)",
                 new String[] { "ID" })) {
             ps.setString(1, "c");
             assertEquals(1, ps.executeUpdate());
-            try (ResultSet keys = ps.getGeneratedKeys()) {
+            try (final ResultSet keys = ps.getGeneratedKeys()) {
                 assertTrue(keys.next());
                 assertEquals(3, keys.getInt(1));
             }
@@ -430,42 +532,49 @@ class IbmiIntegrationTest {
 
     // =================================================================================== transactions
 
+    /**
+     * Verifies manual commit and rollback, savepoints and isolation level changes, and that auto-commit
+     * changes are immediately visible to another connection.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void d01_transactions() throws SQLException {
         final Statement s = st();
-        s.execute("create table " + schema + ".tx (id int)");
-        conn.setAutoCommit(false);
+        s.execute("create table " + s_schema + ".tx (id int)");
+        s_conn.setAutoCommit(false);
         try {
-            s.executeUpdate("insert into " + schema + ".tx values 1");
-            conn.rollback();
+            s.executeUpdate("insert into " + s_schema + ".tx values 1");
+            s_conn.rollback();
             assertEquals(0, count("tx"));
-            s.executeUpdate("insert into " + schema + ".tx values 2");
-            conn.commit();
-            s.executeUpdate("insert into " + schema + ".tx values 3");
-            final Savepoint sp = conn.setSavepoint("SP1");
-            s.executeUpdate("insert into " + schema + ".tx values 4");
-            conn.rollback(sp);
-            conn.commit();
+            s.executeUpdate("insert into " + s_schema + ".tx values 2");
+            s_conn.commit();
+            s.executeUpdate("insert into " + s_schema + ".tx values 3");
+            final Savepoint sp = s_conn.setSavepoint("SP1");
+            s.executeUpdate("insert into " + s_schema + ".tx values 4");
+            s_conn.rollback(sp);
+            s_conn.commit();
             assertEquals(2, count("tx"));
-            conn.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
-            s.executeUpdate("delete from " + schema + ".tx");
-            conn.rollback();
+            s_conn.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
+            s.executeUpdate("delete from " + s_schema + ".tx");
+            s_conn.rollback();
             assertEquals(2, count("tx"));
         } finally {
-            conn.setAutoCommit(true);
-            conn.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
+            s_conn.setAutoCommit(true);
+            s_conn.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
         }
         // auto-commit: immediately visible to another connection
-        st().executeUpdate("insert into " + schema + ".tx values 5");
-        try (Connection c2 = open(""); ResultSet rs = c2.createStatement().executeQuery(
-                "select count(*) from " + schema + ".tx")) {
+        st().executeUpdate("insert into " + s_schema + ".tx values 5");
+        try (final Connection c2 = open(""); final ResultSet rs = c2.createStatement().executeQuery(
+                "select count(*) from " + s_schema + ".tx")) {
             assertTrue(rs.next());
             assertEquals(3, rs.getInt(1));
         }
     }
 
     private static int count(final String _table) throws SQLException {
-        try (ResultSet rs = st().executeQuery("select count(*) from " + schema + "." + _table)) {
+        try (final ResultSet rs = st().executeQuery("select count(*) from " + s_schema + "." + _table)) {
             rs.next();
             return rs.getInt(1);
         }
@@ -473,12 +582,19 @@ class IbmiIntegrationTest {
 
     // =================================================================================== procedures
 
+    /**
+     * Verifies callable statements: a procedure with IN, OUT and INOUT parameters, a function return value,
+     * and a CALL without output parameters.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void e01_callable() throws SQLException {
         final Statement s = st();
-        s.execute("create procedure " + schema + ".p1 (in a int, out b varchar(20), inout c decimal(9,2)) "
+        s.execute("create procedure " + s_schema + ".p1 (in a int, out b varchar(20), inout c decimal(9,2)) "
                 + "language sql begin set b = 'got ' concat a; set c = c * 2; end");
-        try (CallableStatement cs = conn.prepareCall("{call " + schema + ".p1(?, ?, ?)}")) {
+        try (final CallableStatement cs = s_conn.prepareCall("{call " + s_schema + ".p1(?, ?, ?)}")) {
             cs.setInt(1, 21);
             cs.registerOutParameter(2, Types.VARCHAR);
             cs.setBigDecimal(3, new BigDecimal("1.25"));
@@ -487,17 +603,17 @@ class IbmiIntegrationTest {
             assertEquals("got 21", cs.getString(2));
             assertEquals(new BigDecimal("2.50"), cs.getBigDecimal(3));
         }
-        s.execute("create function " + schema + ".f1 (x int) returns int language sql return x * 3");
-        try (CallableStatement cs = conn.prepareCall("{? = call " + schema + ".f1(?)}")) {
+        s.execute("create function " + s_schema + ".f1 (x int) returns int language sql return x * 3");
+        try (final CallableStatement cs = s_conn.prepareCall("{? = call " + s_schema + ".f1(?)}")) {
             cs.registerOutParameter(1, Types.INTEGER);
             cs.setInt(2, 14);
             cs.execute();
             assertEquals(42, cs.getInt(1));
         }
         // a CALL without output parameters
-        s.execute("create table " + schema + ".pt (v int)");
-        s.execute("create procedure " + schema + ".p2 (in v int) language sql insert into " + schema + ".pt values v");
-        try (CallableStatement cs = conn.prepareCall("call " + schema + ".p2(?)")) {
+        s.execute("create table " + s_schema + ".pt (v int)");
+        s.execute("create procedure " + s_schema + ".p2 (in v int) language sql insert into " + s_schema + ".pt values v");
+        try (final CallableStatement cs = s_conn.prepareCall("call " + s_schema + ".p2(?)")) {
             cs.setInt(1, 7);
             cs.execute();
         }
@@ -506,24 +622,31 @@ class IbmiIntegrationTest {
 
     // =================================================================================== metadata
 
+    /**
+     * Verifies the DatabaseMetaData catalog methods (tables, columns, keys, schemas, types, indexes and
+     * procedures) against tables created in the scratch schema.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void f01_databaseMetaData() throws SQLException {
-        st().execute("create table " + schema + ".parent (id int not null primary key, name varchar(30) not null)");
-        st().execute("create table " + schema + ".child (cid int not null primary key, pid int references "
-                + schema + ".parent (id))");
-        final DatabaseMetaData md = conn.getMetaData();
+        st().execute("create table " + s_schema + ".parent (id int not null primary key, name varchar(30) not null)");
+        st().execute("create table " + s_schema + ".child (cid int not null primary key, pid int references "
+                + s_schema + ".parent (id))");
+        final DatabaseMetaData md = s_conn.getMetaData();
         assertEquals("DB2 UDB for AS/400", md.getDatabaseProductName());
         assertTrue(md.getDatabaseMajorVersion() >= 7);
         assertNotNull(md.getUserName());
-        try (ResultSet rs = md.getTables(null, schema, "%", new String[] { "TABLE" })) {
+        try (final ResultSet rs = md.getTables(null, s_schema, "%", new String[] { "TABLE" })) {
             int n = 0;
             while (rs.next()) {
-                assertEquals(schema, rs.getString("TABLE_SCHEM"));
+                assertEquals(s_schema, rs.getString("TABLE_SCHEM"));
                 n++;
             }
             assertTrue(n >= 2);
         }
-        try (ResultSet rs = md.getColumns(null, schema, "PARENT", "%")) {
+        try (final ResultSet rs = md.getColumns(null, s_schema, "PARENT", "%")) {
             assertTrue(rs.next());
             assertEquals("ID", rs.getString("COLUMN_NAME"));
             assertEquals(Types.INTEGER, rs.getInt("DATA_TYPE"));
@@ -534,54 +657,67 @@ class IbmiIntegrationTest {
             assertEquals(30, rs.getInt("COLUMN_SIZE"));
             assertEquals(2, rs.getInt("ORDINAL_POSITION"));
         }
-        try (ResultSet rs = md.getPrimaryKeys(null, schema, "PARENT")) {
+        try (final ResultSet rs = md.getPrimaryKeys(null, s_schema, "PARENT")) {
             assertTrue(rs.next());
             assertEquals("ID", rs.getString("COLUMN_NAME"));
         }
-        try (ResultSet rs = md.getImportedKeys(null, schema, "CHILD")) {
+        try (final ResultSet rs = md.getImportedKeys(null, s_schema, "CHILD")) {
             assertTrue(rs.next());
             assertEquals("PARENT", rs.getString("PKTABLE_NAME"));
             assertEquals("PID", rs.getString("FKCOLUMN_NAME"));
         }
-        try (ResultSet rs = md.getSchemas(null, schema)) {
+        try (final ResultSet rs = md.getSchemas(null, s_schema)) {
             assertTrue(rs.next());
         }
-        try (ResultSet rs = md.getTypeInfo()) {
+        try (final ResultSet rs = md.getTypeInfo()) {
             assertTrue(rs.next());
         }
-        try (ResultSet rs = md.getTableTypes()) {
+        try (final ResultSet rs = md.getTableTypes()) {
             assertTrue(rs.next());
         }
-        try (ResultSet rs = md.getIndexInfo(null, schema, "PARENT", false, true)) {
+        try (final ResultSet rs = md.getIndexInfo(null, s_schema, "PARENT", false, true)) {
             assertNotNull(rs.getMetaData());
         }
-        try (ResultSet rs = md.getProcedures(null, "QSYS2", "QCMDEXC")) {
+        try (final ResultSet rs = md.getProcedures(null, "QSYS2", "QCMDEXC")) {
             assertTrue(rs.next());
         }
     }
 
     // =================================================================================== connection features
 
+    /**
+     * Verifies the schema connection property, changing the schema, and that QTEMP persists for the life of the
+     * connection.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void g01_schemaAndSession() throws SQLException {
-        try (Connection c = open(";schema=" + schema)) {
-            assertEquals(schema, c.getSchema());
+        try (final Connection c = open(";schema=" + s_schema)) {
+            assertEquals(s_schema, c.getSchema());
             c.createStatement().execute("create table t3 (a int)");
             c.setSchema("QSYS2");
             assertEquals("QSYS2", c.getSchema());
-            try (ResultSet rs = c.createStatement().executeQuery("select count(*) from systables fetch first 1 row only")) {
+            try (final ResultSet rs = c.createStatement().executeQuery("select count(*) from systables fetch first 1 row only")) {
                 assertTrue(rs.next());
             }
             // QTEMP persists for the life of the connection
             c.createStatement().execute("create table qtemp.keep (a int)");
             c.createStatement().execute("insert into qtemp.keep values 1");
-            try (ResultSet rs = c.createStatement().executeQuery("select a from qtemp.keep")) {
+            try (final ResultSet rs = c.createStatement().executeQuery("select a from qtemp.keep")) {
                 assertTrue(rs.next());
             }
             assertTrue(c.isValid(5));
         }
     }
 
+    /**
+     * Verifies reading two result sets interleaved, scrollable result set positioning, and the max rows limit.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void g02_interleavedResultSetsScrollingAndLimits() throws SQLException {
         final ResultSet a = st().executeQuery("with r(k) as (values 1 union all select k + 1 from r where k < 50) "
@@ -596,8 +732,8 @@ class IbmiIntegrationTest {
         a.close();
         b.close();
 
-        final Statement sc = conn.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY);
-        try (ResultSet rs = sc.executeQuery("values 1, 2, 3")) {
+        final Statement sc = s_conn.createStatement(ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY);
+        try (final ResultSet rs = sc.executeQuery("values 1, 2, 3")) {
             assertTrue(rs.last());
             assertEquals(3, rs.getRow());
             assertTrue(rs.previous());
@@ -607,7 +743,7 @@ class IbmiIntegrationTest {
         }
         final Statement lim = st();
         lim.setMaxRows(3);
-        try (ResultSet rs = lim.executeQuery("with r(k) as (values 1 union all select k + 1 from r where k < 100) "
+        try (final ResultSet rs = lim.executeQuery("with r(k) as (values 1 union all select k + 1 from r where k < 100) "
                 + "select k from r")) {
             int n = 0;
             while (rs.next()) {
@@ -617,9 +753,16 @@ class IbmiIntegrationTest {
         }
     }
 
+    /**
+     * Verifies query timeouts: a cancellable query is cancelled with the session kept, and a non-cancellable
+     * CL command causes the session to be restarted transparently with a warning.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void g03_timeoutAndRecovery() throws SQLException {
-        try (Connection c = open("")) {
+        try (final Connection c = open("")) {
             c.createStatement().execute("create table qtemp.marker (a int)");
             final String job = ((Db2ShellConnection) c).getJobName();
             final Statement s = c.createStatement();
@@ -631,24 +774,30 @@ class IbmiIntegrationTest {
                             + "qsys2.syscolumns c").next());
             assertTrue(System.currentTimeMillis() - t0 < 10000, "took " + (System.currentTimeMillis() - t0));
             assertEquals(job, ((Db2ShellConnection) c).getJobName());
-            try (ResultSet rs = c.createStatement().executeQuery("select count(*) from qtemp.marker")) {
+            try (final ResultSet rs = c.createStatement().executeQuery("select count(*) from qtemp.marker")) {
                 assertTrue(rs.next());
             }
             // a CL command cannot be cancelled: the session is abandoned and transparently restarted
             t0 = System.currentTimeMillis();
             assertThrows(SQLTimeoutException.class, () -> s.execute("call qsys2.qcmdexc('DLYJOB DLY(40)')"));
             assertTrue(System.currentTimeMillis() - t0 < 25000, "took " + (System.currentTimeMillis() - t0));
-            try (ResultSet rs = c.createStatement().executeQuery("values 1")) {
+            try (final ResultSet rs = c.createStatement().executeQuery("values 1")) {
                 assertTrue(rs.next());
             }
             assertNotNull(c.getWarnings());
         }
     }
 
+    /**
+     * Verifies the raw result mode with an explicit encoding, and an explicit CCSID.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void g04_rawModeAndExplicitEncoding() throws SQLException {
-        try (Connection c = open(";resultMode=raw;encoding=" + System.getProperty("os400.job.file.encoding", "Cp037"));
-                ResultSet rs = c.createStatement().executeQuery("select 1 as a, 'b' as b, cast(null as int) n "
+        try (final Connection c = open(";resultMode=raw;encoding=" + System.getProperty("os400.job.file.encoding", "Cp037"));
+                final ResultSet rs = c.createStatement().executeQuery("select 1 as a, 'b' as b, cast(null as int) n "
                         + "from sysibm.sysdummy1")) {
             assertEquals(Types.VARCHAR, rs.getMetaData().getColumnType(1));
             assertTrue(rs.next());
@@ -656,25 +805,32 @@ class IbmiIntegrationTest {
             assertEquals("b", rs.getString("B"));
             assertNull(rs.getString("N"));
         }
-        try (Connection c = open(";ccsid=37"); ResultSet rs = c.createStatement().executeQuery("values 'ok'")) {
+        try (final Connection c = open(";ccsid=37"); final ResultSet rs = c.createStatement().executeQuery("values 'ok'")) {
             assertTrue(rs.next());
             assertEquals("ok", rs.getString(1));
         }
     }
 
+    /**
+     * Verifies connecting through the DataSource, the initSql property, and the choices reported by
+     * getPropertyInfo for the result mode.
+     *
+     * @throws SQLException
+     *             if the driver reports an unexpected error
+     */
     @Test
     void g05_dataSourceAndProperties() throws SQLException {
         final Db2ShellDataSource ds = new Db2ShellDataSource();
         ds.setSchema("QSYS2");
-        try (Connection c = ds.getConnection()) {
+        try (final Connection c = ds.getConnection()) {
             assertEquals("QSYS2", c.getSchema());
         }
         final Properties p = new Properties();
-        p.setProperty("initSql", "set path = system path, " + schema);
-        try (Connection c = DriverManager.getConnection("jdbc:db2shell:", p);
-                ResultSet rs = c.createStatement().executeQuery("values current path")) {
+        p.setProperty("initSql", "set path = system path, " + s_schema);
+        try (final Connection c = DriverManager.getConnection("jdbc:db2shell:", p);
+                final ResultSet rs = c.createStatement().executeQuery("values current path")) {
             assertTrue(rs.next());
-            assertTrue(rs.getString(1).contains(schema), rs.getString(1));
+            assertTrue(rs.getString(1).contains(s_schema), rs.getString(1));
         }
         assertEquals(Arrays.asList("typed", "raw"),
                 Arrays.asList(new Db2ShellDriver().getPropertyInfo("jdbc:db2shell:", null)[11].choices));

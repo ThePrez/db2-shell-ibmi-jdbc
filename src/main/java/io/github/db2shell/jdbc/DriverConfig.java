@@ -54,7 +54,7 @@ public final class DriverConfig {
     public static final String P_TRACE = "trace";
     public static final String P_TRACE_FILE = "traceFile";
 
-    private static final Map<String, String[]> PROPERTY_DOCS = new LinkedHashMap<String, String[]>();
+    private static final Map<String, String[]> s_propertyDocs = new LinkedHashMap<String, String[]>();
 
     static {
         doc(P_USER, null, "User profile to connect as (passed to db2 -u). Defaults to the job's user.");
@@ -86,80 +86,90 @@ public final class DriverConfig {
         doc(P_TRACE_FILE, null, "File to write trace output to (default: DriverManager log writer or stderr).");
     }
 
-    private static void doc(final String name, final String dflt, final String description) {
-        PROPERTY_DOCS.put(name, new String[] { dflt, description });
+    private static void doc(final String _name, final String _dflt, final String _description) {
+        s_propertyDocs.put(_name, new String[] { _dflt, _description });
     }
 
     // ---------------------------------------------------------------- values
-    private final String url;
-    private final String rdb;
-    private final String user;
-    private final String password;
-    private final Charset charset;
-    private final boolean charsetExplicit;
-    private final String schema;
-    private final List<String> libraries;
-    private final String path;
-    private final List<String> initSql;
-    private final String qshPath;
-    private final String db2Path;
-    private final ResultMode resultMode;
-    private final boolean unicode;
-    private final int lineWidth;
-    private final int lobMaxLength;
-    private final boolean updateCounts;
-    private final boolean autoCommit;
-    private final int isolation;
-    private final int queryTimeout;
-    private final int startupTimeout;
-    private final int describeCacheSize;
-    private final boolean trace;
-    private final String traceFile;
+    private final String m_url;
+    private final String m_rdb;
+    private final String m_user;
+    private final String m_password;
+    private final Charset m_charset;
+    private final boolean m_charsetExplicit;
+    private final String m_schema;
+    private final List<String> m_libraries;
+    private final String m_path;
+    private final List<String> m_initSql;
+    private final String m_qshPath;
+    private final String m_db2Path;
+    private final ResultMode m_resultMode;
+    private final boolean m_unicode;
+    private final int m_lineWidth;
+    private final int m_lobMaxLength;
+    private final boolean m_updateCounts;
+    private final boolean m_autoCommit;
+    private final int m_isolation;
+    private final int m_queryTimeout;
+    private final int m_startupTimeout;
+    private final int m_describeCacheSize;
+    private final boolean m_trace;
+    private final String m_traceFile;
 
+    /**
+     * Builds a configuration from already-merged properties, applying defaults and validating every value.
+     *
+     * @param _url
+     *            the original JDBC URL
+     * @param _p
+     *            the merged properties, keyed by canonical property name
+     * @throws SQLException
+     *             if a property has an invalid value or the requested encoding is not available
+     */
     private DriverConfig(final String _url, final Map<String, String> _p) throws SQLException {
-        url = _url;
-        user = blankToNull(_p.get(P_USER));
-        password = _p.get(P_PASSWORD);
+        m_url = _url;
+        m_user = blankToNull(_p.get(P_USER));
+        m_password = _p.get(P_PASSWORD);
         String r = blankToNull(_p.get(P_RDB));
-        if (null == r && null != user) {
+        if (null == r && null != m_user) {
             r = "*LOCAL";
         }
-        rdb = r;
+        m_rdb = r;
         final String enc = blankToNull(_p.get(P_ENCODING));
         final String ccsid = blankToNull(_p.get(P_CCSID));
         if (null != enc) {
-            charset = lookupCharset(enc);
-            charsetExplicit = true;
+            m_charset = lookupCharset(enc);
+            m_charsetExplicit = true;
         } else if (null != ccsid) {
-            charset = charsetForCcsid(ccsid);
-            charsetExplicit = true;
+            m_charset = charsetForCcsid(ccsid);
+            m_charsetExplicit = true;
         } else {
-            charset = lookupCharset(System.getProperty("os400.job.file.encoding", "Cp037"));
-            charsetExplicit = false;
+            m_charset = lookupCharset(System.getProperty("os400.job.file.encoding", "Cp037"));
+            m_charsetExplicit = false;
         }
-        schema = blankToNull(_p.get(P_SCHEMA));
-        libraries = splitList(_p.get(P_LIBRARIES), ",");
-        path = blankToNull(_p.get(P_PATH));
-        initSql = splitList(_p.get(P_INIT_SQL), ";;");
-        qshPath = dflt(_p.get(P_QSH), "/usr/bin/qsh");
-        db2Path = dflt(_p.get(P_DB2), "/usr/bin/db2");
+        m_schema = blankToNull(_p.get(P_SCHEMA));
+        m_libraries = splitList(_p.get(P_LIBRARIES), ",");
+        m_path = blankToNull(_p.get(P_PATH));
+        m_initSql = splitList(_p.get(P_INIT_SQL), ";;");
+        m_qshPath = dflt(_p.get(P_QSH), "/usr/bin/qsh");
+        m_db2Path = dflt(_p.get(P_DB2), "/usr/bin/db2");
         final String mode = dflt(_p.get(P_RESULT_MODE), "typed").trim().toUpperCase(Locale.ROOT);
         try {
-            resultMode = ResultMode.valueOf(mode);
+            m_resultMode = ResultMode.valueOf(mode);
         } catch (final IllegalArgumentException e) {
             throw new SQLNonTransientConnectionException("Invalid value for " + P_RESULT_MODE + ": " + mode, "08001");
         }
-        unicode = bool(_p, P_UNICODE, false);
-        lineWidth = Math.max(32, Math.min(4000, integer(_p, P_LINE_WIDTH, 128)));
-        lobMaxLength = Math.max(1, integer(_p, P_LOB_MAX, 1048576));
-        updateCounts = bool(_p, P_UPDATE_COUNTS, true);
-        autoCommit = bool(_p, P_AUTOCOMMIT, true);
-        isolation = parseIsolation(dflt(_p.get(P_ISOLATION), "read committed"));
-        queryTimeout = Math.max(0, integer(_p, P_QUERY_TIMEOUT, 0));
-        startupTimeout = Math.max(1, integer(_p, P_STARTUP_TIMEOUT, 60));
-        describeCacheSize = Math.max(0, integer(_p, P_DESCRIBE_CACHE, 100));
-        trace = bool(_p, P_TRACE, false);
-        traceFile = blankToNull(_p.get(P_TRACE_FILE));
+        m_unicode = bool(_p, P_UNICODE, false);
+        m_lineWidth = Math.max(32, Math.min(4000, integer(_p, P_LINE_WIDTH, 128)));
+        m_lobMaxLength = Math.max(1, integer(_p, P_LOB_MAX, 1048576));
+        m_updateCounts = bool(_p, P_UPDATE_COUNTS, true);
+        m_autoCommit = bool(_p, P_AUTOCOMMIT, true);
+        m_isolation = parseIsolation(dflt(_p.get(P_ISOLATION), "read committed"));
+        m_queryTimeout = Math.max(0, integer(_p, P_QUERY_TIMEOUT, 0));
+        m_startupTimeout = Math.max(1, integer(_p, P_STARTUP_TIMEOUT, 60));
+        m_describeCacheSize = Math.max(0, integer(_p, P_DESCRIBE_CACHE, 100));
+        m_trace = bool(_p, P_TRACE, false);
+        m_traceFile = blankToNull(_p.get(P_TRACE_FILE));
     }
 
     /** Returns true if the given URL is handled by this driver. */
@@ -169,10 +179,19 @@ public final class DriverConfig {
 
     /**
      * Parses a URL and connection properties. Properties given in the URL override those in {@code _info}.
+     *
+     * @param _url
+     *            the JDBC URL; must start with {@link #URL_PREFIX}
+     * @param _info
+     *            connection properties, or null
+     * @return the parsed configuration
+     * @throws SQLException
+     *             if the URL is not a db2shell URL or a property has an invalid value
      */
     public static DriverConfig parse(final String _url, final Properties _info) throws SQLException {
         if (!acceptsUrl(_url)) {
-            throw new SQLNonTransientConnectionException("Not a db2shell URL: " + _url, "08001");
+            // The URL is deliberately not included in the message: it may carry a password.
+            throw new SQLNonTransientConnectionException("Not a db2shell URL (expected prefix " + URL_PREFIX + ")", "08001");
         }
         final Map<String, String> props = new LinkedHashMap<String, String>();
         if (null != _info) {
@@ -196,7 +215,7 @@ public final class DriverConfig {
             // tolerate jdbc:db2shell://RDB/
             parts[0] = host.substring(0, host.length() - 1);
         }
-        if (!parts[0].trim().isEmpty() && !parts[0].trim().equalsIgnoreCase("localhost")) {
+        if (!parts[0].trim().isEmpty() && !"localhost".equalsIgnoreCase(parts[0].trim())) {
             props.put(P_RDB, parts[0].trim());
         }
         for (int i = 1; i < parts.length; i++) {
@@ -210,6 +229,15 @@ public final class DriverConfig {
         return new DriverConfig(_url, props);
     }
 
+    /**
+     * Adds one {@code key=value} pair to a property map. A key with no {@code =} is treated as {@code key=true};
+     * blank input is ignored.
+     *
+     * @param _props
+     *            the map to add to; keys are stored under their canonical name
+     * @param _kv
+     *            the {@code key=value} text
+     */
     private static void addKeyValue(final Map<String, String> _props, final String _kv) {
         final String kv = _kv.trim();
         if (kv.isEmpty()) {
@@ -223,8 +251,17 @@ public final class DriverConfig {
         }
     }
 
+    /**
+     * Maps a property name to its canonical spelling: known names are matched case-insensitively, and a few
+     * common aliases ({@code rdb}, {@code database}, {@code libraryList}, {@code currentSchema},
+     * {@code defaultSchema}) are translated.
+     *
+     * @param _name
+     *            the property name as given by the user
+     * @return the canonical name, or {@code _name} unchanged if it is not recognized
+     */
     private static String canonicalName(final String _name) {
-        for (final String known : PROPERTY_DOCS.keySet()) {
+        for (final String known : s_propertyDocs.keySet()) {
             if (known.equalsIgnoreCase(_name)) {
                 return known;
             }
@@ -241,9 +278,18 @@ public final class DriverConfig {
         return _name;
     }
 
+    /**
+     * Describes every supported driver property, for {@link java.sql.Driver#getPropertyInfo}.
+     *
+     * @param _url
+     *            the JDBC URL (currently unused)
+     * @param _info
+     *            properties already supplied by the caller, or null; their values are reported as current values
+     * @return one entry per supported property, in documentation order
+     */
     static DriverPropertyInfo[] propertyInfo(final String _url, final Properties _info) {
         final List<DriverPropertyInfo> ret = new ArrayList<DriverPropertyInfo>();
-        for (final Map.Entry<String, String[]> e : PROPERTY_DOCS.entrySet()) {
+        for (final Map.Entry<String, String[]> e : s_propertyDocs.entrySet()) {
             final String given = null == _info ? null : _info.getProperty(e.getKey());
             final DriverPropertyInfo dpi = new DriverPropertyInfo(e.getKey(), null != given ? given : e.getValue()[0]);
             dpi.description = e.getValue()[1];
@@ -261,6 +307,15 @@ public final class DriverConfig {
     }
 
     // ---------------------------------------------------------------- helpers
+    /**
+     * Looks up a Java charset by name, also trying the {@code IBMnnn} spelling of a {@code Cpnnn} name.
+     *
+     * @param _name
+     *            the charset name
+     * @return the charset
+     * @throws SQLException
+     *             if no charset with that name (or its alternative spelling) is available
+     */
     static Charset lookupCharset(final String _name) throws SQLException {
         try {
             return Charset.forName(_name.trim());
@@ -271,13 +326,23 @@ public final class DriverConfig {
                 try {
                     return Charset.forName("IBM" + n.substring(2));
                 } catch (final RuntimeException e2) {
-                    // fall through
+                    // Intentionally ignored: no tracer exists before the connection is built, and the
+                    // SQLException thrown below reports the original lookup failure as its cause.
                 }
             }
             throw new SQLNonTransientConnectionException("Unsupported encoding: " + _name, "08001", e);
         }
     }
 
+    /**
+     * Finds the Java charset for an IBM CCSID number, trying the spellings used by the various JDKs.
+     *
+     * @param _ccsid
+     *            the CCSID, e.g. {@code "37"} or {@code "1208"}
+     * @return the charset
+     * @throws SQLException
+     *             if the CCSID is UTF-16 (not usable for the db2 utility) or no matching charset is available
+     */
     static Charset charsetForCcsid(final String _ccsid) throws SQLException {
         final String c = _ccsid.trim();
         if ("1208".equals(c)) {
@@ -297,32 +362,53 @@ public final class DriverConfig {
             try {
                 return Charset.forName(candidate);
             } catch (final RuntimeException e) {
-                // try next
+                // Intentionally ignored: this spelling is unknown to this JDK, so try the next one. No tracer
+                // exists before the connection is built; if none match, the SQLException below is thrown.
             }
         }
         throw new SQLNonTransientConnectionException("No Java charset found for CCSID " + c, "08001");
     }
 
+    /**
+     * Parses a transaction isolation name. Accepts JDBC names ({@code read committed}), Db2 abbreviations
+     * ({@code cs}) and IBM i commitment control values ({@code *chg}), case-insensitively, with {@code _} or
+     * {@code -} in place of spaces.
+     *
+     * @param _s
+     *            the isolation name
+     * @return the corresponding {@code Connection.TRANSACTION_*} constant
+     * @throws SQLException
+     *             if the name is not recognized
+     */
     static int parseIsolation(final String _s) throws SQLException {
         final String s = _s.trim().toLowerCase(Locale.ROOT).replace('_', ' ').replace('-', ' ');
-        if (s.equals("read uncommitted") || s.equals("ur") || s.equals("chg") || s.equals("*chg")) {
+        if ("read uncommitted".equals(s) || "ur".equals(s) || "chg".equals(s) || "*chg".equals(s)) {
             return Connection.TRANSACTION_READ_UNCOMMITTED;
         }
-        if (s.equals("read committed") || s.equals("cs") || s.equals("*cs")) {
+        if ("read committed".equals(s) || "cs".equals(s) || "*cs".equals(s)) {
             return Connection.TRANSACTION_READ_COMMITTED;
         }
-        if (s.equals("repeatable read") || s.equals("rs") || s.equals("all") || s.equals("*all")) {
+        if ("repeatable read".equals(s) || "rs".equals(s) || "all".equals(s) || "*all".equals(s)) {
             return Connection.TRANSACTION_REPEATABLE_READ;
         }
-        if (s.equals("serializable") || s.equals("rr")) {
+        if ("serializable".equals(s) || "rr".equals(s)) {
             return Connection.TRANSACTION_SERIALIZABLE;
         }
-        if (s.equals("none") || s.equals("nc") || s.equals("*none")) {
+        if ("none".equals(s) || "nc".equals(s) || "*none".equals(s)) {
             return Connection.TRANSACTION_NONE;
         }
         throw new SQLNonTransientConnectionException("Invalid transaction isolation: " + _s, "08001");
     }
 
+    /**
+     * Splits a delimited list, trimming each element and dropping empty ones.
+     *
+     * @param _s
+     *            the text to split, or null
+     * @param _sep
+     *            the literal separator
+     * @return the elements (empty if {@code _s} is null)
+     */
     private static List<String> splitList(final String _s, final String _sep) {
         final List<String> ret = new ArrayList<String>();
         if (null == _s) {
@@ -336,14 +422,39 @@ public final class DriverConfig {
         return ret;
     }
 
+    /**
+     * Reads a boolean property. {@code true}, {@code yes}, {@code on} and {@code 1} are true; any other
+     * non-blank value is false.
+     *
+     * @param _p
+     *            the property map
+     * @param _key
+     *            the property name
+     * @param _dflt
+     *            the value to use when the property is missing or blank
+     * @return the property value
+     */
     private static boolean bool(final Map<String, String> _p, final String _key, final boolean _dflt) {
         final String v = blankToNull(_p.get(_key));
         if (null == v) {
             return _dflt;
         }
-        return v.equalsIgnoreCase("true") || v.equalsIgnoreCase("yes") || v.equals("1") || v.equalsIgnoreCase("on");
+        return "true".equalsIgnoreCase(v) || "yes".equalsIgnoreCase(v) || "1".equals(v) || "on".equalsIgnoreCase(v);
     }
 
+    /**
+     * Reads an integer property.
+     *
+     * @param _p
+     *            the property map
+     * @param _key
+     *            the property name
+     * @param _dflt
+     *            the value to use when the property is missing or blank
+     * @return the property value
+     * @throws SQLException
+     *             if the value is not a valid integer
+     */
     private static int integer(final Map<String, String> _p, final String _key, final int _dflt) throws SQLException {
         final String v = blankToNull(_p.get(_key));
         if (null == v) {
@@ -365,28 +476,28 @@ public final class DriverConfig {
     }
 
     // ---------------------------------------------------------------- getters
-    public String getUrl() { return url; }
-    public String getRdb() { return rdb; }
-    public String getUser() { return user; }
-    public String getPassword() { return password; }
-    public Charset getCharset() { return charset; }
-    public boolean isCharsetExplicit() { return charsetExplicit; }
-    public String getSchema() { return schema; }
-    public List<String> getLibraries() { return libraries; }
-    public String getPath() { return path; }
-    public List<String> getInitSql() { return initSql; }
-    public String getQshPath() { return qshPath; }
-    public String getDb2Path() { return db2Path; }
-    public ResultMode getResultMode() { return resultMode; }
-    public boolean isUnicode() { return unicode; }
-    public int getLineWidth() { return lineWidth; }
-    public int getLobMaxLength() { return lobMaxLength; }
-    public boolean isUpdateCounts() { return updateCounts; }
-    public boolean isAutoCommit() { return autoCommit; }
-    public int getIsolation() { return isolation; }
-    public int getQueryTimeout() { return queryTimeout; }
-    public int getStartupTimeout() { return startupTimeout; }
-    public int getDescribeCacheSize() { return describeCacheSize; }
-    public boolean isTrace() { return trace; }
-    public String getTraceFile() { return traceFile; }
+    public String getUrl() { return m_url; }
+    public String getRdb() { return m_rdb; }
+    public String getUser() { return m_user; }
+    public String getPassword() { return m_password; }
+    public Charset getCharset() { return m_charset; }
+    public boolean isCharsetExplicit() { return m_charsetExplicit; }
+    public String getSchema() { return m_schema; }
+    public List<String> getLibraries() { return m_libraries; }
+    public String getPath() { return m_path; }
+    public List<String> getInitSql() { return m_initSql; }
+    public String getQshPath() { return m_qshPath; }
+    public String getDb2Path() { return m_db2Path; }
+    public ResultMode getResultMode() { return m_resultMode; }
+    public boolean isUnicode() { return m_unicode; }
+    public int getLineWidth() { return m_lineWidth; }
+    public int getLobMaxLength() { return m_lobMaxLength; }
+    public boolean isUpdateCounts() { return m_updateCounts; }
+    public boolean isAutoCommit() { return m_autoCommit; }
+    public int getIsolation() { return m_isolation; }
+    public int getQueryTimeout() { return m_queryTimeout; }
+    public int getStartupTimeout() { return m_startupTimeout; }
+    public int getDescribeCacheSize() { return m_describeCacheSize; }
+    public boolean isTrace() { return m_trace; }
+    public String getTraceFile() { return m_traceFile; }
 }
