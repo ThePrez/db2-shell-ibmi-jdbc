@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>io.github.db2shell</groupId>
+    <artifactId>db2-shell-jdbc</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>db2-shell-jdbc</name>
+    <description>
+        A JDBC driver for IBM i that runs SQL through the db2 command line utility (QSH/PASE /usr/bin/db2).
+    </description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <!-- IBM i ships Java 8 as the default JVM, so the driver targets Java 8 -->
+        <maven.compiler.release>8</maven.compiler.release>
+        <junit.version>5.10.2</junit.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <release>${maven.compiler.release}</release>
+                    <compilerArgs>
+                        <arg>-Xlint:all,-options,-serial</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.1</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>io.github.db2shell.jdbc.tools.Db2ShellCli</mainClass>
+                            <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.7.1</version>
+                <configuration>
+                    <descriptorRefs>
+                        <descriptorRef>jar-with-dependencies</descriptorRef>
+                    </descriptorRefs>
+                    <archive>
+                        <manifest>
+                            <mainClass>io.github.db2shell.jdbc.tools.Db2ShellCli</mainClass>
+                            <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+                        </manifest>
+                    </archive>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>make-assembly</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
